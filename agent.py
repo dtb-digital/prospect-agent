@@ -4,7 +4,6 @@ from langchain_core.messages import BaseMessage, HumanMessage, ToolMessage
 from langchain_core.tools import StructuredTool
 from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, END, START
-from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.runnables import RunnableConfig
 from pydantic import BaseModel, Field
 from langsmith import traceable
@@ -56,12 +55,15 @@ class User(TypedDict):
     sources: List[str]
     priority_score: Optional[float]
     priority_reason: Optional[str]
+    screening_score: Optional[float]  # Nytt felt
+    screening_reason: Optional[str]   # Nytt felt
 
 # Search config -> # Søkekonfigurasjon
 class SearchConfig(TypedDict):
     domain: str
     target_role: str
     search_depth: int
+    max_results: Optional[int] = 5  # Ny parameter med default verdi
 
 # Først definerer vi reducers
 def add_messages(old_messages: List[BaseMessage], new_messages: List[BaseMessage]) -> List[BaseMessage]:
@@ -83,62 +85,77 @@ class AgentState(TypedDict):
     config: SearchConfig
     users: Annotated[List[User], add_users]
 
-# Define the response structure -> # Definer responsstrukturen
-class PrioritizationResponse(BaseModel):
-    prioritized_users: List[User] = Field(description="Topp 3 prioriterte brukere")
-    reasoning: str = Field(description="Forklaring på hvorfor disse brukerne ble valgt")
-
-# Define hunter search node -> # Definer hunter-søkenoden
-@traceable(
-    run_type="chain",
-    name="hunter_search",
-    metadata={"tool": "hunter.io"}
-)
-def hunter_search(state: AgentState, config: RunnableConfig) -> AgentState:
-    """Søker etter brukere via Hunter.io API."""
-    try:
-        # Bruk hunter tool
-        hunter_data = hunter_tool.invoke({
-            "domain": state["config"]["domain"],
-            "api_key": os.getenv("HUNTER_API_KEY")
-        })
+# 3. SCREENING NODE (FØRSTE STEG)
+class HunterDataCollector:
+    """Samler kontakter fra Hunter.io API"""
+    
+    @traceable(
+        run_type="chain",
+        name="hunter_collection",
+        metadata={"type": "data_collection"}
+    )
+    def run(self, state: AgentState, config: RunnableConfig) -> AgentState:
+        """Henter alle kontakter fra Hunter.io"""
+        messages = []
+        users = []
+        offset = 0
+        limit = 50
         
-        # Konverter til User objekter
-        users = [
-            {
-                "email": email["value"],
-                "first_name": email.get("first_name", ""),
-                "last_name": email.get("last_name", ""),
-                "role": email.get("position", ""),
-                "confidence": str(email.get("confidence", "")),
-                "linkedin_url": email.get("linkedin", ""),
-                "phone_number": email.get("phone_number", ""),
-                "sources": ["hunter"],
-                "priority_score": None,
-                "priority_reason": None
-            }
-            for email in hunter_data["data"]["emails"]
-        ]
+        while True:
+            try:
+                # Hent batch med kontakter
+                hunter_data = hunter_tool.invoke({
+                    "domain": state["config"]["domain"],
+                    "api_key": os.getenv("HUNTER_API_KEY"),
+                    "offset": offset,
+                    "limit": limit
+                })
+                
+                if not hunter_data["emails"]:
+                    break
+                
+                # Konverter direkte til User objekter
+                for email in hunter_data["emails"]:
+                    users.append({
+                        "email": email["value"],
+                        "first_name": email.get("first_name", ""),
+                        "last_name": email.get("last_name", ""),
+                        "role": email.get("position", ""),
+                        "confidence": str(email.get("confidence", "")),
+                        "linkedin_url": email.get("linkedin", ""),
+                        "phone_number": email.get("phone_number", ""),
+                        "sources": ["hunter"]
+                    })
+                
+                messages.append(
+                    ToolMessage(
+                        tool_call_id=f"hunter_batch_{offset}",
+                        tool_name="hunter_collection",
+                        content=f"Hentet {len(hunter_data['emails'])} kontakter"
+                    )
+                )
+                
+                # Gå til neste side
+                offset += limit
+                if offset >= hunter_data["meta"]["total"]:
+                    break
+                    
+            except Exception as e:
+                messages.append(
+                    ToolMessage(
+                        tool_call_id="hunter_error",
+                        tool_name="hunter_collection",
+                        content=f"Feil under henting av kontakter: {str(e)}"
+                    )
+                )
+                break
         
         return {
-            "messages": [ToolMessage(
-                tool_call_id="hunter_search",
-                tool_name="get_hunter_data",
-                content=f"Fant {len(users)} brukere fra Hunter.io"
-            )],
+            "messages": messages,
             "users": users
         }
-        
-    except Exception as e:
-        return {
-            "messages": [ToolMessage(
-                tool_call_id="hunter_search_error",
-                tool_name="get_hunter_data",
-                content=f"Hunter API-feil: {str(e)}"
-            )],
-            "users": []
-        }
 
+# 4. PRIORITERING NODE (ANDRE STEG)
 class PriorityAnalysis(BaseModel):
     """Analyse av brukers egnethet for målrollen"""
     users: Dict[str, dict] = Field(description="Dictionary med email som nøkkel og analyse som verdi")
@@ -174,6 +191,7 @@ def prioritize_users(state: AgentState, config: RunnableConfig) -> AgentState:
     analysis = model.invoke(
         PRIORITY_ANALYSIS_PROMPT.format(
             role=state['config']['target_role'],
+            max_results=state['config'].get('max_results', 5),  # Bruk config eller default
             users=json.dumps([{
                 "name": f"{u['first_name']} {u['last_name']}",
                 "role": u['role'],
@@ -188,9 +206,9 @@ def prioritize_users(state: AgentState, config: RunnableConfig) -> AgentState:
     prioritized = []
     for user in users_to_analyze:
         analysis_result = analysis.users.get(user["email"])
-        if analysis_result and analysis_result["score"] > 0.3:
+        if analysis_result:  # Ta med alle som ble valgt av LLM
             prioritized.append({
-                **user,  # Behold alle eksisterende felter
+                **user,
                 "priority_score": analysis_result["score"],
                 "priority_reason": analysis_result["reason"],
                 "sources": user.get("sources", []) + ["prioritized"]
@@ -201,7 +219,7 @@ def prioritize_users(state: AgentState, config: RunnableConfig) -> AgentState:
         "users": prioritized
     }
 
-# LinkedIn Analysis Agent -> # LinkedIn-analyseagent
+# 5. LINKEDIN NODE (SISTE STEG)
 class LinkedInAnalysis(BaseModel):
     """Strukturert analyse av LinkedIn profil"""
     summary: str = Field(description="Kort profesjonell oppsummering")
@@ -227,19 +245,16 @@ class LinkedInAnalysis(BaseModel):
 def get_linkedin_info(state: AgentState, config: RunnableConfig) -> AgentState:
     """Beriker prioriterte brukere med LinkedIn data og analyse."""
     
-    LINKEDIN_THRESHOLD = 0.5  # Senket fra 0.6 til 0.5
-    
-    # Finn høyt prioriterte brukere med LinkedIn URL
+    # Finn prioriterte brukere med LinkedIn URL
     prioritized_users = [
         u for u in state["users"] 
-        if isinstance(u.get("priority_score"), (int, float))  # Sjekk at det er et tall
-        and float(u.get("priority_score", 0.0)) >= LINKEDIN_THRESHOLD 
-        and u.get("linkedin_url")
+        if "prioritized" in u.get("sources", [])  # Bruk bare de som ble prioritert
+        and u.get("linkedin_url")  # og har LinkedIn URL
     ]
     
     if not prioritized_users:
         return {
-            "messages": [HumanMessage(content=f"Ingen brukere nådde LinkedIn-terskelen på {LINKEDIN_THRESHOLD}")],
+            "messages": [HumanMessage(content="Ingen brukere nådde LinkedIn-terskelen")],
             "users": state["users"]  # Behold alle brukere, men uten LinkedIn-berikelse
         }
     
@@ -322,14 +337,17 @@ def create_workflow() -> StateGraph:
     
     graph_builder = StateGraph(AgentState)
     
-    # Add nodes
-    graph_builder.add_node("hunter_search", hunter_search)
+    # Initialiser collector
+    hunter_collector = HunterDataCollector()
+    
+    # Legg til noder
+    graph_builder.add_node("hunter_collection", hunter_collector.run)
     graph_builder.add_node("prioritize_users", prioritize_users)
     graph_builder.add_node("get_linkedin_info", get_linkedin_info)
     
-    # Add edges
-    graph_builder.add_edge(START, "hunter_search")
-    graph_builder.add_edge("hunter_search", "prioritize_users")
+    # Definer flyten
+    graph_builder.add_edge(START, "hunter_collection")
+    graph_builder.add_edge("hunter_collection", "prioritize_users")
     graph_builder.add_edge("prioritize_users", "get_linkedin_info")
     
     return graph_builder
@@ -349,9 +367,10 @@ if __name__ == "__main__":
     result = app.invoke({
         "messages": [],
         "config": {
-            "domain": "asker.kommune.no",
-            "target_role": "arkiv eller dokumentasjonsforvaltning",
-            "search_depth": 1
+            "domain": "nille.no",
+            "target_role": "ansvarlig for digital eller markedsføring",
+            "search_depth": 1,
+            "max_results": 5  
         },
         "users": []
     })
@@ -361,6 +380,7 @@ if __name__ == "__main__":
     for user in result["users"]:
         if "linkedin_analyzed" in user.get("sources", []):
             print(f"\n{user['first_name']} {user['last_name']} ({user['email']}):")
+            print(f"- Screening: {user.get('screening_score', 0)} - {user.get('screening_reason', 'Ingen begrunnelse')}")
             print(f"- Poengsum: {user['priority_score']}")
             print(f"- Oppsummering: {user.get('summary', 'Ingen oppsummering')}")
             print(f"- Ferdigheter: {', '.join(user.get('key_skills', []))}")

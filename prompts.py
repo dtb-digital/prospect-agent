@@ -42,28 +42,40 @@ NB:
 - Antall år i nåværende bedrift skal rundes til nærmeste halve år
 """
 
-PRIORITY_ANALYSIS_PROMPT = """Vurder disse personene for rollen {role}.
+PRIORITY_ANALYSIS_PROMPT = """Analyser disse personene for rollen {role}.
 
 Personer å vurdere:
 {users}
 
-For hver person, gi en score fra 0 til 1 hvor:
-- 0.0-0.2: Ikke relevant
-- 0.3-0.5: Noe relevant erfaring
-- 0.6-0.8: Veldig relevant
-- 0.9-1.0: Perfekt match
+For hver person, gjør en helhetlig vurdering basert på:
 
-Gi også en detaljert begrunnelse for hver score.
+KRITISKE FAKTORER:
+- LinkedIn-profil: Må ha en gyldig LinkedIn URL
+- Rolle/tittel: Vurder hvor relevant nåværende rolle er for målrollen
+- Data-kvalitet: Vurder confidence-score og mengde tilgjengelig informasjon
 
-Returner svaret i JSON format med en "users" nøkkel som inneholder analysen:
+VURDERING:
+- Gi en score fra 0.0 til 1.0 basert på hvor relevant personen er
+- Høyere score til personer med sterke indikasjoner på match mot målrollen
+- Lavere score til personer med manglende data eller uklar relevans
+- Personer uten LinkedIn-profil skal automatisk få score 0.0
+
+Returner de {max_results} mest relevante personene i JSON format:
 {{
     "users": {{
         "person@eksempel.no": {{
-            "score": 0.8,
-            "reason": "Detaljert begrunnelse på norsk..."
+            "score": 0.85,
+            "reason": "Detaljert begrunnelse som inkluderer:
+                      - Hvorfor rollen er relevant
+                      - Kvaliteten på tilgjengelig data
+                      - Andre relevante observasjoner"
         }}
     }}
 }}
 
-NB: Skriv all begrunnelse på norsk.
+NB: 
+- Prioriter kvalitet over kvantitet - velg kun de mest relevante kandidatene
+- Begrunn tydelig hvorfor hver person ble valgt eller fikk høy score
+- Skriv all begrunnelse på norsk
+- Tenk på at disse personene skal analyseres videre via LinkedIn i neste steg
 """ 

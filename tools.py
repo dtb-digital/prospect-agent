@@ -65,33 +65,50 @@ linkedin_tool = StructuredTool(
     return_type=LinkedInProfileResponse
 )
 
-# Input schema for Hunter tool
+class HunterResponse(BaseModel):
+    """Strukturert respons fra Hunter API"""
+    emails: List[dict] = Field(..., description="Liste over e-poster")
+    meta: dict = Field(..., description="Metadata inkludert antall sider")
+
 class HunterInput(BaseModel):
     domain: str = Field(..., description="Domenet å søke i")
     api_key: str = Field(..., description="Hunter.io API nøkkel")
+    offset: int = Field(default=0, description="Offset for paginering")
+    limit: int = Field(default=50, description="Antall resultater per side")
 
-def get_hunter_data(domain: str, api_key: str) -> Dict:
-    """Henter brukerdata fra Hunter.io API."""
+def get_hunter_data(domain: str, api_key: str, offset: int = 0, limit: int = 50) -> Dict:
+    """Henter brukerdata fra Hunter.io API med paginering."""
     try:
         response = requests.get(
             "https://api.hunter.io/v2/domain-search",
             params={
                 "domain": domain,
                 "api_key": api_key,
-                "limit": 50
+                "offset": offset,
+                "limit": limit
             }
         )
         response.raise_for_status()
-        return response.json()
+        data = response.json()
+        
+        # Valider og strukturer responsen
+        return HunterResponse(
+            emails=data["data"]["emails"],
+            meta={
+                "total": data["meta"]["results"],
+                "offset": offset,
+                "limit": limit
+            }
+        ).dict()
         
     except requests.RequestException as e:
         raise Exception(f"Hunter API error: {str(e)}")
 
-# Definer Hunter tool
+# Oppdater Hunter tool med ny input/output
 hunter_tool = StructuredTool(
     name="get_hunter_data",
-    description="Henter brukerdata fra Hunter.io",
+    description="Henter brukerdata fra Hunter.io med paginering",
     func=get_hunter_data,
     args_schema=HunterInput,
-    return_type=dict
+    return_type=HunterResponse
 ) 
