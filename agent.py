@@ -1,109 +1,367 @@
-from typing import TypedDict, Annotated, List
-from langchain_core.messages import BaseMessage, HumanMessage
-from langgraph.graph import StateGraph
-from dotenv import load_dotenv
-import os
-import requests
+from typing import Annotated, List, Optional, Dict
+from typing_extensions import TypedDict
+from langchain_core.messages import BaseMessage, HumanMessage, ToolMessage
+from langchain_core.tools import StructuredTool
+from langchain_openai import ChatOpenAI
+from langgraph.graph import StateGraph, END, START
+from langgraph.checkpoint.memory import MemorySaver
+from langchain_core.runnables import RunnableConfig
+from pydantic import BaseModel, Field
 from langsmith import traceable
+from langsmith.wrappers import wrap_openai
+from openai import OpenAI
+import json
+import os
+from dotenv import load_dotenv
+from tools import linkedin_tool, hunter_tool, LinkedInProfileResponse
+from prompts import LINKEDIN_ANALYSIS_PROMPT, PRIORITY_ANALYSIS_PROMPT
 
 load_dotenv()
 
-# Define User type
+# Configs
+DEFAULT_MODEL = "gpt-4o-mini"  # eller "gpt-3.5-turbo" basert på behov
+DEFAULT_TEMPERATURE = 0
+
+# Wrap OpenAI client for better tracing
+openai_client = wrap_openai(OpenAI())
+
+# User model with enrichment fields -> # Brukermodell med berikelsesfelter
 class User(TypedDict):
+    # Base info -> # Grunnleggende info
     email: str
     first_name: str
     last_name: str
     role: str
     confidence: str
-    linkedin_url: str
-    phone_number: str
+    
+    # Hunter.io data -> # Hunter.io data
+    linkedin_url: Optional[str]
+    phone_number: Optional[str]
+    
+    # LinkedIn enrichment -> # LinkedIn-berikelse
+    summary: Optional[str]
+    experience_years: Optional[int]
+    current_company_years: Optional[float]  # Nytt felt
+    key_skills: Optional[List[str]]
+    leadership_experience: Optional[bool]
+    education_level: Optional[str]  # Nå standardisert til: Videregående, Bachelor, Master, PhD, eller Ukjent
+    profile_type: Optional[str]
+    personality_traits: Optional[List[dict]]
+    career_pattern: Optional[dict]
+    education_pattern: Optional[dict]
+    network_strength: Optional[dict]
+    fun_facts: Optional[List[str]]
+    
+    # Metadata -> # Metadata
+    sources: List[str]
+    priority_score: Optional[float]
+    priority_reason: Optional[str]
 
-# Define message reducer
+# Search config -> # Søkekonfigurasjon
+class SearchConfig(TypedDict):
+    domain: str
+    target_role: str
+    search_depth: int
+
+# Først definerer vi reducers
 def add_messages(old_messages: List[BaseMessage], new_messages: List[BaseMessage]) -> List[BaseMessage]:
     return old_messages + new_messages
 
-# Define user reducer
 def add_users(old_users: List[User], new_users: List[User]) -> List[User]:
+    """Reducer som oppdaterer eller legger til brukere basert på email."""
     email_to_user = {user['email']: user for user in old_users}
     for new_user in new_users:
-        email_to_user[new_user['email']] = new_user
+        if new_user['email'] in email_to_user:
+            email_to_user[new_user['email']].update(new_user)
+        else:
+            email_to_user[new_user['email']] = new_user
     return list(email_to_user.values())
 
-# Define state
+# Så definerer vi state
 class AgentState(TypedDict):
     messages: Annotated[List[BaseMessage], add_messages]
-    domain: str
-    role: str
+    config: SearchConfig
     users: Annotated[List[User], add_users]
-    prioritizedUsers: Annotated[List[User], add_users]
-    finalUsers: Annotated[List[User], add_users]
 
-# Define hunter search node
-@traceable(run_type="chain", name="hunter_search")
-def hunter_search(state: AgentState, config: dict = None):
-    hunter_api_key = os.getenv("HUNTER_API_KEY")
-    response = requests.get(
-        "https://api.hunter.io/v2/domain-search",
-        params={
-            "domain": state["domain"],
-            "api_key": hunter_api_key,
-            "limit": 25
+# Define the response structure -> # Definer responsstrukturen
+class PrioritizationResponse(BaseModel):
+    prioritized_users: List[User] = Field(description="Topp 3 prioriterte brukere")
+    reasoning: str = Field(description="Forklaring på hvorfor disse brukerne ble valgt")
+
+# Define hunter search node -> # Definer hunter-søkenoden
+@traceable(
+    run_type="chain",
+    name="hunter_search",
+    metadata={"tool": "hunter.io"}
+)
+def hunter_search(state: AgentState, config: RunnableConfig) -> AgentState:
+    """Søker etter brukere via Hunter.io API."""
+    try:
+        # Bruk hunter tool
+        hunter_data = hunter_tool.invoke({
+            "domain": state["config"]["domain"],
+            "api_key": os.getenv("HUNTER_API_KEY")
+        })
+        
+        # Konverter til User objekter
+        users = [
+            {
+                "email": email["value"],
+                "first_name": email.get("first_name", ""),
+                "last_name": email.get("last_name", ""),
+                "role": email.get("position", ""),
+                "confidence": str(email.get("confidence", "")),
+                "linkedin_url": email.get("linkedin", ""),
+                "phone_number": email.get("phone_number", ""),
+                "sources": ["hunter"],
+                "priority_score": None,
+                "priority_reason": None
+            }
+            for email in hunter_data["data"]["emails"]
+        ]
+        
+        return {
+            "messages": [ToolMessage(
+                tool_call_id="hunter_search",
+                tool_name="get_hunter_data",
+                content=f"Fant {len(users)} brukere fra Hunter.io"
+            )],
+            "users": users
         }
+        
+    except Exception as e:
+        return {
+            "messages": [ToolMessage(
+                tool_call_id="hunter_search_error",
+                tool_name="get_hunter_data",
+                content=f"Hunter API-feil: {str(e)}"
+            )],
+            "users": []
+        }
+
+class PriorityAnalysis(BaseModel):
+    """Analyse av brukers egnethet for målrollen"""
+    users: Dict[str, dict] = Field(description="Dictionary med email som nøkkel og analyse som verdi")
+
+@traceable(
+    run_type="chain",
+    name="prioritize_users",
+    metadata={"type": "prioritization"}
+)
+def prioritize_users(state: AgentState, config: RunnableConfig) -> AgentState:
+    """Prioriterer brukere basert på deres egnethet for målrollen."""
+    
+    # Setup LLM med strukturert output
+    model = ChatOpenAI(
+        model=DEFAULT_MODEL,
+        temperature=DEFAULT_TEMPERATURE,
+        api_key=os.getenv("OPENAI_API_KEY")  # Bruk API-nøkkel direkte
+    ).with_structured_output(
+        PriorityAnalysis,
+        method="json_mode"
     )
     
-    if not response.ok:
+    # Filtrer brukere med rolle
+    users_to_analyze = [u for u in state["users"] if u.get("role")]
+    
+    if not users_to_analyze:
         return {
-            "messages": [HumanMessage(content=f"Hunter API error: {response.status_code}")],
+            "messages": [HumanMessage(content="Ingen brukere med roller funnet")],
             "users": []
         }
     
-    data = response.json()
-    users = [
-        {
-            "email": email["value"],
-            "first_name": email.get("first_name", ""),
-            "last_name": email.get("last_name", ""),
-            "role": email.get("position", ""),
-            "confidence": str(email.get("confidence", "")),
-            "linkedin_url": email.get("linkedin", ""),
-            "phone_number": email.get("phone_number", "")
-        }
-        for email in data["data"]["emails"]
-    ]
+    # Analyser alle brukere i én forespørsel
+    analysis = model.invoke(
+        PRIORITY_ANALYSIS_PROMPT.format(
+            role=state['config']['target_role'],
+            users=json.dumps([{
+                "name": f"{u['first_name']} {u['last_name']}",
+                "role": u['role'],
+                "email": u['email'],
+                "experience": u.get('experience', 'Ikke spesifisert')
+            } for u in users_to_analyze], indent=2)
+        ),
+        config=config
+    )
+    
+    # Oppdater brukere med prioriteringer
+    prioritized = []
+    for user in users_to_analyze:
+        analysis_result = analysis.users.get(user["email"])
+        if analysis_result and analysis_result["score"] > 0.3:
+            prioritized.append({
+                **user,  # Behold alle eksisterende felter
+                "priority_score": analysis_result["score"],
+                "priority_reason": analysis_result["reason"],
+                "sources": user.get("sources", []) + ["prioritized"]
+            })
     
     return {
-        "messages": [HumanMessage(content="Hunter.io search completed")],
-        "users": users
+        "messages": [HumanMessage(content=f"Analyserte {len(users_to_analyze)} brukere, prioriterte {len(prioritized)}")],
+        "users": prioritized
     }
 
-# Setup workflow
-workflow = StateGraph(AgentState)
-workflow.add_node("hunter_search", hunter_search)
-workflow.set_entry_point("hunter_search")
-workflow.set_finish_point("hunter_search")
+# LinkedIn Analysis Agent -> # LinkedIn-analyseagent
+class LinkedInAnalysis(BaseModel):
+    """Strukturert analyse av LinkedIn profil"""
+    summary: str = Field(description="Kort profesjonell oppsummering")
+    experience_years: int = Field(description="Totalt antall års relevant erfaring")
+    current_company_years: float = Field(description="Antall år i nåværende bedrift")
+    key_skills: List[str] = Field(description="Liste over relevante ferdigheter for målrollen")
+    leadership_experience: bool = Field(description="Har personen ledererfaring")
+    education_level: str = Field(
+        description="Høyeste utdanningsnivå: 'Videregående', 'Bachelor', 'Master', 'PhD', eller 'Ukjent'"
+    )
+    profile_type: str = Field(description="Klassifisering av karrieretype")
+    personality_traits: List[dict] = Field(description="Personlighetstrekk utledet fra profilen")
+    career_pattern: dict = Field(description="Analyse av karrieremønster")
+    education_pattern: dict = Field(description="Mønster i utdanning")
+    network_strength: dict = Field(description="Nettverksstyrke: followers og connections")
+    fun_facts: List[str] = Field(description="Interessante fakta om personen")
+
+@traceable(
+    run_type="chain",
+    name="get_linkedin_info",
+    metadata={"tool": "linkedin"}
+)
+def get_linkedin_info(state: AgentState, config: RunnableConfig) -> AgentState:
+    """Beriker prioriterte brukere med LinkedIn data og analyse."""
+    
+    LINKEDIN_THRESHOLD = 0.5  # Senket fra 0.6 til 0.5
+    
+    # Finn høyt prioriterte brukere med LinkedIn URL
+    prioritized_users = [
+        u for u in state["users"] 
+        if isinstance(u.get("priority_score"), (int, float))  # Sjekk at det er et tall
+        and float(u.get("priority_score", 0.0)) >= LINKEDIN_THRESHOLD 
+        and u.get("linkedin_url")
+    ]
+    
+    if not prioritized_users:
+        return {
+            "messages": [HumanMessage(content=f"Ingen brukere nådde LinkedIn-terskelen på {LINKEDIN_THRESHOLD}")],
+            "users": state["users"]  # Behold alle brukere, men uten LinkedIn-berikelse
+        }
+    
+    # Setup LLM med strukturert output
+    model = ChatOpenAI(
+        model=DEFAULT_MODEL,
+        temperature=DEFAULT_TEMPERATURE,
+        api_key=os.getenv("OPENAI_API_KEY")  # Bruk API-nøkkel direkte
+    ).with_structured_output(
+        LinkedInAnalysis,
+        method="json_mode"
+    )
+    
+    # Hold styr på hvilke brukere som er oppdatert
+    updated_users = {user["email"]: user for user in state["users"]}
+    
+    analysis_messages = []
+    
+    enriched = []
+    
+    for user in prioritized_users:
+        try:
+            # 1. Hent LinkedIn data via tool
+            tool_message = ToolMessage(
+                tool_call_id=f"linkedin_fetch_{user['email']}",
+                tool_name="get_linkedin_profile",
+                content=f"Henter LinkedIn-data for {user['email']}"
+            )
+            linkedin_data = linkedin_tool.invoke(user["linkedin_url"], config=config)
+            
+            # 2. Analyser profilen med LLM
+            analysis = model.invoke(
+                LINKEDIN_ANALYSIS_PROMPT.format(
+                    role=state['config']['target_role'],
+                    linkedin_data=json.dumps(linkedin_data, indent=2)
+                ),
+                config=config
+            )
+            
+            # Oppdater bruker med LinkedIn data
+            enriched_user = updated_users[user["email"]].copy()
+            enriched_user.update({
+                **{k: getattr(analysis, k) for k in [
+                    "summary", "experience_years", "key_skills", "leadership_experience", 
+                    "education_level", "profile_type", "personality_traits", "career_pattern",
+                    "education_pattern", "network_strength", "fun_facts"
+                ]},
+                "sources": user.get("sources", []) + ["linkedin_analyzed"]
+            })
+            updated_users[user["email"]] = enriched_user
+            
+            analysis_messages.extend([
+                tool_message,
+                ToolMessage(
+                    tool_call_id=f"linkedin_analysis_{user['email']}",
+                    tool_name="analyze_linkedin",
+                    content=f"Analyserte LinkedIn-profil for {user['email']}"
+                )
+            ])
+            
+            enriched.append(enriched_user)
+            
+        except Exception as e:
+            analysis_messages.append(
+                ToolMessage(
+                    tool_call_id=f"linkedin_error_{user['email']}",
+                    tool_name="get_linkedin_info",
+                    content=f"Feil ved prosessering av LinkedIn-data for {user['email']}: {str(e)}"
+                )
+            )
+    
+    return {
+        "messages": analysis_messages,
+        "users": enriched  # Reduceren vil merge dette med eksisterende brukere
+    }
+
+# Workflow setup og kompilering -> # Arbeidsflyt oppsett og kompilering
+def create_workflow() -> StateGraph:
+    """Oppretter og konfigurerer workflow."""
+    
+    graph_builder = StateGraph(AgentState)
+    
+    # Add nodes
+    graph_builder.add_node("hunter_search", hunter_search)
+    graph_builder.add_node("prioritize_users", prioritize_users)
+    graph_builder.add_node("get_linkedin_info", get_linkedin_info)
+    
+    # Add edges
+    graph_builder.add_edge(START, "hunter_search")
+    graph_builder.add_edge("hunter_search", "prioritize_users")
+    graph_builder.add_edge("prioritize_users", "get_linkedin_info")
+    
+    return graph_builder
+
+def get_config() -> RunnableConfig:
+    """Enkel konfigurasjon for testing."""
+    return RunnableConfig(
+        tags=["test", "prospect-agent"],  # Legg til flere relevante tags
+        metadata={"version": "1.0"}  # Legg til metadata
+    )
 
 # Compile workflow
-app = workflow.compile()
+app = create_workflow().compile()
 
 # Test
 if __name__ == "__main__":
     result = app.invoke({
         "messages": [],
-        "domain": "documaster.com",
-        "role": "",
-        "users": [],
-        "prioritizedUsers": [],
-        "finalUsers": []
+        "config": {
+            "domain": "asker.kommune.no",
+            "target_role": "arkiv eller dokumentasjonsforvaltning",
+            "search_depth": 1
+        },
+        "users": []
     })
     
-    print("\nFinal State:")
-    print(f"Messages: {[m.content for m in result['messages']]}")
-    print(f"\nFound {len(result['users'])} users:")
-    for user in result['users']:
-        print(f"- {user['first_name']} {user['last_name']}")
-        print(f"  Role: {user['role']}")
-        print(f"  Email: {user['email']}")
-        print(f"  Confidence: {user['confidence']}")
-        if user['linkedin_url']:
-            print(f"  LinkedIn: {user['linkedin_url']}")
-        print()
+    # Print berikede brukere
+    print("\nBrukere med LinkedIn-analyse:")
+    for user in result["users"]:
+        if "linkedin_analyzed" in user.get("sources", []):
+            print(f"\n{user['first_name']} {user['last_name']} ({user['email']}):")
+            print(f"- Poengsum: {user['priority_score']}")
+            print(f"- Oppsummering: {user.get('summary', 'Ingen oppsummering')}")
+            print(f"- Ferdigheter: {', '.join(user.get('key_skills', []))}")
+            print(f"- Erfaring: {user.get('experience_years', 0)} år")
