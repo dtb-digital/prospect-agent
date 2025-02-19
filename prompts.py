@@ -42,7 +42,7 @@ NB:
 - Antall år i nåværende bedrift skal rundes til nærmeste halve år
 """
 
-PRIORITY_ANALYSIS_PROMPT = """Analyser disse personene for rollen {role}.
+PRIORITY_ANALYSIS_PROMPT = """Analyser disse personene for å finne de som har rollen: {role}.
 
 Personer å vurdere:
 {users}
@@ -50,14 +50,14 @@ Personer å vurdere:
 For hver person, gjør en helhetlig vurdering basert på:
 
 KRITISKE FAKTORER:
-- LinkedIn-profil: Må ha en gyldig LinkedIn URL
-- Rolle/tittel: Vurder hvor relevant nåværende rolle er for målrollen
+- Rolle-match: Har personen en stilling/tittel som matcher målrollen vi leter etter?
+- LinkedIn-profil: Må ha en gyldig LinkedIn URL for videre verifisering
 - Data-kvalitet: Vurder confidence-score og mengde tilgjengelig informasjon
 
 VURDERING:
-- Gi en score fra 0.0 til 1.0 basert på hvor relevant personen er
-- Høyere score til personer med sterke indikasjoner på match mot målrollen
-- Lavere score til personer med manglende data eller uklar relevans
+- Gi en score fra 0.0 til 1.0 basert på hvor godt nåværende rolle matcher
+- Høyere score til personer som har en rolle/tittel som direkte matcher det vi leter etter
+- Lavere score til personer med roller som er uklare eller ikke relevante
 - Personer uten LinkedIn-profil skal automatisk få score 0.0
 
 Returner de {max_results} mest relevante personene i JSON format:
@@ -66,7 +66,7 @@ Returner de {max_results} mest relevante personene i JSON format:
         "person@eksempel.no": {{
             "score": 0.85,
             "reason": "Detaljert begrunnelse som inkluderer:
-                      - Hvorfor rollen er relevant
+                      - Hvorfor personens nåværende rolle matcher det vi leter etter
                       - Kvaliteten på tilgjengelig data
                       - Andre relevante observasjoner"
         }}
@@ -74,8 +74,9 @@ Returner de {max_results} mest relevante personene i JSON format:
 }}
 
 NB: 
-- Prioriter kvalitet over kvantitet - velg kun de mest relevante kandidatene
-- Begrunn tydelig hvorfor hver person ble valgt eller fikk høy score
+- Vi leter etter personer som HAR denne rollen nå, ikke potensielle kandidater
+- Prioriter direkte rolle-match over andre faktorer
+- Begrunn tydelig hvorfor hver persons nåværende rolle er relevant
 - Skriv all begrunnelse på norsk
 - Tenk på at disse personene skal analyseres videre via LinkedIn i neste steg
 """ 

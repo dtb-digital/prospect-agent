@@ -25,13 +25,13 @@ DEFAULT_TEMPERATURE = 0
 openai_client = wrap_openai(OpenAI())
 
 # User model with enrichment fields -> # Brukermodell med berikelsesfelter
-class User(TypedDict):
+class User(TypedDict, total=False):  # Legg til total=False for å gjøre alle felter valgfrie
     # Base info -> # Grunnleggende info
     email: str
-    first_name: str
-    last_name: str
-    role: str
-    confidence: str
+    first_name: Optional[str]
+    last_name: Optional[str]
+    role: Optional[str]
+    confidence: Optional[str]
     
     # Hunter.io data -> # Hunter.io data
     linkedin_url: Optional[str]
@@ -40,10 +40,10 @@ class User(TypedDict):
     # LinkedIn enrichment -> # LinkedIn-berikelse
     summary: Optional[str]
     experience_years: Optional[int]
-    current_company_years: Optional[float]  # Nytt felt
+    current_company_years: Optional[float]
     key_skills: Optional[List[str]]
     leadership_experience: Optional[bool]
-    education_level: Optional[str]  # Nå standardisert til: Videregående, Bachelor, Master, PhD, eller Ukjent
+    education_level: Optional[str]
     profile_type: Optional[str]
     personality_traits: Optional[List[dict]]
     career_pattern: Optional[dict]
@@ -55,8 +55,8 @@ class User(TypedDict):
     sources: List[str]
     priority_score: Optional[float]
     priority_reason: Optional[str]
-    screening_score: Optional[float]  # Nytt felt
-    screening_reason: Optional[str]   # Nytt felt
+    screening_score: Optional[float]
+    screening_reason: Optional[str]
 
 # Search config -> # Søkekonfigurasjon
 class SearchConfig(TypedDict):
@@ -124,7 +124,9 @@ class HunterDataCollector:
                         "confidence": str(email.get("confidence", "")),
                         "linkedin_url": email.get("linkedin", ""),
                         "phone_number": email.get("phone_number", ""),
-                        "sources": ["hunter"]
+                        "sources": ["hunter"],
+                        "department": email.get("department", ""),
+                        "seniority": email.get("seniority", "")
                     })
                 
                 messages.append(
@@ -191,12 +193,15 @@ def prioritize_users(state: AgentState, config: RunnableConfig) -> AgentState:
     analysis = model.invoke(
         PRIORITY_ANALYSIS_PROMPT.format(
             role=state['config']['target_role'],
-            max_results=state['config'].get('max_results', 5),  # Bruk config eller default
+            max_results=state['config'].get('max_results', 5),
             users=json.dumps([{
                 "name": f"{u['first_name']} {u['last_name']}",
                 "role": u['role'],
                 "email": u['email'],
-                "experience": u.get('experience', 'Ikke spesifisert')
+                "linkedin_url": u.get('linkedin_url', ''),  # Legg til LinkedIn URL
+                "confidence": u.get('confidence', ''),      # Legg til confidence score
+                "department": u.get('department', ''),      # Legg til avdeling
+                "seniority": u.get('seniority', '')        # Legg til ansiennitet
             } for u in users_to_analyze], indent=2)
         ),
         config=config
@@ -245,11 +250,12 @@ class LinkedInAnalysis(BaseModel):
 def get_linkedin_info(state: AgentState, config: RunnableConfig) -> AgentState:
     """Beriker prioriterte brukere med LinkedIn data og analyse."""
     
-    # Finn prioriterte brukere med LinkedIn URL
+    # Finn prioriterte brukere med LinkedIn URL og score
     prioritized_users = [
         u for u in state["users"] 
-        if "prioritized" in u.get("sources", [])  # Bruk bare de som ble prioritert
-        and u.get("linkedin_url")  # og har LinkedIn URL
+        if "prioritized" in u.get("sources", [])  # Sjekk at de er prioritert
+        and u.get("linkedin_url")                 # Sjekk at de har LinkedIn URL
+        and u.get("priority_score", 0) > 0        # Sjekk at de har fått en score
     ]
     
     if not prioritized_users:
@@ -367,10 +373,10 @@ if __name__ == "__main__":
     result = app.invoke({
         "messages": [],
         "config": {
-            "domain": "nille.no",
+            "domain": "documaster.com",
             "target_role": "ansvarlig for digital eller markedsføring",
             "search_depth": 1,
-            "max_results": 5  
+            "max_results": 3  
         },
         "users": []
     })
