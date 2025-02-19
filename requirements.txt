@@ -1,6 +1,9 @@
+fastapi
+uvicorn
 langchain
+langchain_openai
 langgraph
 openai
 python-dotenv
 requests
-pydantic 
+pydantic
