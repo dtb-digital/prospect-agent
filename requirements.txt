@@ -7,3 +7,6 @@ openai
 python-dotenv
 requests
 pydantic
+langchain-openai
+fastapi
+uvicorn
