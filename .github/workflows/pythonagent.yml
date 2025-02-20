@@ -35,4 +35,5 @@ jobs:
           az containerapp update \
             --name ${{ secrets.CONTAINER_APP_NAME }} \
             --resource-group ${{ secrets.RESOURCE_GROUP }} \
-            --container-name ${{ secrets.CONTAINER_APP_NAME }}/python_agent:${{ github.sha }}
+            --container-name ${{ secrets.CONTAINER_APP_NAME }} \
+            --image ${{ secrets.REGISTRY_LOGIN_SERVER }}/python_agent:${{ github.sha }}
