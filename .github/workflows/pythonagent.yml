@@ -26,5 +26,5 @@ jobs:
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_PASSWORD }}
       - run: |
-          docker build -f docker/Dockerfile-Collaboration-Server . -t ${{ secrets.REGISTRY_LOGIN_SERVER }}/python_agent:${{ github.sha }}
+          docker build -f docker/dockerfile . -t ${{ secrets.REGISTRY_LOGIN_SERVER }}/python_agent:${{ github.sha }}
           docker push ${{ secrets.REGISTRY_LOGIN_SERVER }}/python_agent:${{ github.sha }}
