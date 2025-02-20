@@ -28,3 +28,11 @@ jobs:
       - run: |
           docker build -f docker/dockerfile . -t ${{ secrets.REGISTRY_LOGIN_SERVER }}/python_agent:${{ github.sha }}
           docker push ${{ secrets.REGISTRY_LOGIN_SERVER }}/python_agent:${{ github.sha }}
+    
+
+      - name: "Deploy to Azure Container App"
+        run: |
+          az containerapp update \
+            --name ${{ secrets.CONTAINER_APP_NAME }} \
+            --resource-group ${{ secrets.RESOURCE_GROUP }} \
+            --image ${{ secrets.REGISTRY_LOGIN_SERVER }}/python_agent:${{ github.sha }}
