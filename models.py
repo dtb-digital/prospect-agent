@@ -1,4 +1,4 @@
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Annotated
 from typing_extensions import TypedDict
 from pydantic import BaseModel, Field, validator
 from langchain_core.messages import BaseMessage
@@ -49,11 +49,13 @@ class SearchConfig(TypedDict):
     target_role: str
     max_results: int
 
+MessageList = Annotated[List[BaseMessage], "messages"]
+UserList = Annotated[List[Dict], "users"]
+
 class AgentState(TypedDict):
-    """State for agent workflow"""
-    messages: List[BaseMessage]
+    messages: MessageList
+    users: UserList
     config: SearchConfig
-    users: List[Dict[str, Any]]
 
 #######################
 # Basis datamodeller

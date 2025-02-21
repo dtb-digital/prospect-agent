@@ -20,7 +20,10 @@ from models import (
     SearchConfig, 
     PriorityAnalysis,
     HunterResponse,
-    User
+    User,
+    AgentState,
+    MessageList,
+    UserList
 )
 import logging
 from langgraph.prebuilt import ToolNode, tools_condition
@@ -40,15 +43,6 @@ DEFAULT_TEMPERATURE = 0
 
 # Wrap OpenAI client for better tracing
 openai_client = wrap_openai(OpenAI())
-
-# Definer state typer
-MessageList = Annotated[List[BaseMessage], "messages"]
-UserList = Annotated[List[Dict], "users"]
-
-class AgentState(TypedDict):
-    messages: Annotated[List[BaseMessage], "messages"]
-    users: Annotated[List[Dict], "users"]
-    config: SearchConfig
 
 # Opprett LLM instans
 llm = ChatOpenAI(
@@ -204,7 +198,7 @@ def get_linkedin_data(state: AgentState, config: RunnableConfig) -> AgentState:
             linkedin_data = linkedin_tool.invoke({"linkedin_url": user["linkedin_url"]})
             enriched_user = {
                 **user,
-                "linkedin_raw": linkedin_data["data"],
+                "linkedin_raw_data": linkedin_data,  # Lagrer hele responsen
                 "sources": user["sources"] + ["linkedin"]
             }
             enriched.append(enriched_user)
@@ -224,9 +218,12 @@ def get_linkedin_data(state: AgentState, config: RunnableConfig) -> AgentState:
                 )
             )
     
+    # Oppdater state med alle brukere - både de som ble beriket og de som ikke ble det
+    all_users = [u for u in state["users"] if u not in prioritized_users] + enriched
+    
     return {
         "messages": state["messages"] + messages,
-        "users": enriched or state["users"],
+        "users": all_users,
         "config": state["config"]
     }
 
@@ -235,7 +232,8 @@ def get_linkedin_data(state: AgentState, config: RunnableConfig) -> AgentState:
 def analyze_profiles(state: AgentState, config: RunnableConfig) -> AgentState:
     """Analyserer LinkedIn profiler."""
     users_to_analyze = [u for u in state["users"] 
-                       if "linkedin" in u.get("sources", [])]
+                       if "linkedin" in u.get("sources", [])
+                       and "linkedin_raw_data" in u]
     
     if not users_to_analyze:
         return {
@@ -249,13 +247,11 @@ def analyze_profiles(state: AgentState, config: RunnableConfig) -> AgentState:
     
     for user in users_to_analyze:
         try:
-            profile_data = {**user, **user["linkedin_raw"]}
-            
-            # Kjør én samlet analyse
+            # Send rådata direkte til analyse
             messages = [
                 SystemMessage(content=ANALYSIS_SYSTEM_PROMPT),
                 HumanMessage(content=ANALYSIS_PROMPT.format(
-                    raw_profile=json.dumps(profile_data, indent=2),
+                    raw_profile=json.dumps(user["linkedin_raw_data"], indent=2),
                     target_role=state["config"]["target_role"],
                     model_schema=get_model_schema(User)
                 ))
@@ -268,31 +264,34 @@ def analyze_profiles(state: AgentState, config: RunnableConfig) -> AgentState:
             
             analyzed_user = {
                 **user,
-                **analysis_results,  # Flater ut analysen direkte i bruker-objektet
+                **analysis_results,
                 "sources": user["sources"] + ["analyzed"]
             }
+            # Fjern rådata etter analyse
+            analyzed_user.pop("linkedin_raw_data", None)
             analyzed.append(analyzed_user)
             messages.extend([
                 ToolMessage(
                     tool_call_id=f"analyze_{user['email']}",
                     tool_name="analyze",
                     content=f"Analyserte profil for {user['email']}"
-                ),
-                AIMessage(content=f"Analyse fullført for {user['email']}")
+                )
             ])
         except Exception as e:
-            messages.extend([
+            messages.append(
                 ToolMessage(
                     tool_call_id=f"analyze_error_{user['email']}",
                     tool_name="analyze",
                     content=f"Feil: {str(e)}"
-                ),
-                AIMessage(content=f"Analyse feilet for {user['email']}")
-            ])
+                )
+            )
+    
+    # Behold brukere som ikke ble analysert
+    all_users = [u for u in state["users"] if u not in users_to_analyze] + analyzed
     
     return {
         "messages": state["messages"] + messages,
-        "users": analyzed or state["users"],
+        "users": all_users,
         "config": state["config"]
     }
 
