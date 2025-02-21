@@ -4,7 +4,6 @@ from pydantic import BaseModel, Field
 import requests
 import os
 from models import (
-    LinkedInRawData, 
     LinkedInInput,
     HunterInput,
     HunterResponse

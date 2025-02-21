@@ -3,6 +3,8 @@ from typing_extensions import TypedDict
 from pydantic import BaseModel, Field, validator
 from langchain_core.messages import BaseMessage
 from datetime import datetime
+from langgraph.graph import MessagesState
+from operator import add
 
 #######################
 # API og Input/Output modeller
@@ -28,47 +30,77 @@ class HunterResponse(BaseModel):
 # Interne modeller (for analyse)
 #######################
 
-class LinkedInRawData(BaseModel):
-    """Rå data fra LinkedIn API - brukes kun for analyse"""
-    about: Optional[str] = None
-    city: Optional[str] = None
-    connections: Optional[int] = None
-    country: Optional[str] = None
-    current_company: Optional[str] = None
-    current_job_title: Optional[str] = None
-    education: Optional[List[Dict]] = None
-    experiences: Optional[List[Dict]] = None
-    full_name: Optional[str] = None
-    headline: Optional[str] = None
-    profile_pic_url: Optional[str] = None
-    languages: Optional[List[Dict]] = None
-
 class SearchConfig(TypedDict):
     """Konfigurasjon for søk"""
     domain: str
     target_role: str
     max_results: int
 
-MessageList = Annotated[List[BaseMessage], "messages"]
-UserList = Annotated[List[Dict], "users"]
+def merge_user_fields(existing: List[Dict], updates: List[Dict]) -> List[Dict]:
+    """Merger brukere basert på email som nøkkel og User-modellen"""
+    user_map = {u["email"]: u for u in existing}
+    
+    for update in updates:
+        email = update["email"]
+        if email in user_map:
+            current = user_map[email]
+            # Bare oppdater felter som er definert i User-modellen
+            for field in User.__fields__:
+                if field in update and update[field] is not None:
+                    current[field] = update[field]
+            # Spesialhåndtering av sources
+            if "sources" in update:
+                current["sources"] = list(set(current.get("sources", []) + update["sources"]))
+        else:
+            user_map[email] = update
+    
+    return list(user_map.values())
 
-class AgentState(TypedDict):
-    messages: MessageList
-    users: UserList
+class User(BaseModel):
+    """
+    Representerer en bruker med all analysert informasjon.
+    Bygges opp gradvis gjennom analyseprosessen.
+    """
+    email: str
+    linkedin_url: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    role: Optional[str] = None
+    confidence: Optional[str] = None
+    
+    # Analyse-resultater
+    location: Optional[Location] = None
+    headline: Optional[str] = Field(None, description="Profesjonell overskrift/tittel fra LinkedIn")
+    profile_image_url: Optional[str] = None
+    about: Optional[str] = Field(None, description="Profesjonell sammendrag/bio")
+
+    career: Optional[CareerInfo] = None
+    expertise: Optional[ExpertiseInfo] = None
+    education: Optional[EducationInfo] = None
+    network: Optional[NetworkInfo] = None
+    personality: Optional[PersonalityInfo] = None
+    meta: Optional[MetaInfo] = None
+    
+    # Tracking
+    sources: List[str] = Field(default_factory=list)
+    last_updated: datetime = Field(default_factory=datetime.now)
+
+class AgentState(MessagesState):
+    users: Annotated[List[Dict], merge_user_fields]
     config: SearchConfig
 
 #######################
 # Basis datamodeller
 #######################
 
+class Location(BaseModel):
+    """Personens fysiske lokasjon"""
+    city: Optional[str] = Field(None, description="By personen er lokalisert i")
+    country: Optional[str] = Field(None, description="Land personen er lokalisert i")
+    region: Optional[str] = Field(None, description="Region eller fylke")
+
 class BasicInfo(BaseModel):
     """Grunnleggende kontaktinformasjon og identifikasjon"""
-    class Location(BaseModel):
-        """Personens fysiske lokasjon"""
-        city: Optional[str] = Field(None, description="By personen er lokalisert i")
-        country: Optional[str] = Field(None, description="Land personen er lokalisert i")
-        region: Optional[str] = Field(None, description="Region eller fylke")
-
     email: str = Field(..., description="Primær e-postadresse")
     first_name: Optional[str] = Field(None, description="Fornavn")
     last_name: Optional[str] = Field(None, description="Etternavn")
@@ -160,8 +192,9 @@ class CareerInfo(BaseModel):
     )
     seniority_level: str = Field(
         ...,
-        description="Vurdering av erfaringsnivå basert på roller, ansvar og "
-        "innflytelse. Vurder både formell posisjon og reell påvirkningskraft"
+        description="Vurdering av erfaringsnivå basert på roller, ansvar og innflytelse. "
+        "Vurder både formell posisjon og reell påvirkningskraft. "
+        "F.eks. 'Junior', 'Mid-level', 'Senior', 'Lead', 'Executive'"
     )
     career_progression: CareerProgression
     responsibilities: List[str] = Field(
@@ -169,13 +202,6 @@ class CareerInfo(BaseModel):
         description="Liste over konkrete hovedansvarsområder i nåværende rolle, "
         "med fokus på målbare resultater og strategisk betydning"
     )
-
-    @validator('seniority_level')
-    def validate_seniority(cls, v):
-        valid_levels = ['Junior', 'Mid-level', 'Senior', 'Lead', 'Executive']
-        if v not in valid_levels:
-            raise ValueError(f'Ugyldig erfaringsnivå. Må være en av: {valid_levels}')
-        return v
 
 #######################
 # Analyse modeller - Kompetanse
@@ -189,14 +215,10 @@ class ExpertiseInfo(BaseModel):
     class Language(BaseModel):
         """Språkferdighet med nivå"""
         name: str = Field(..., description="Språkets navn")
-        proficiency: str = Field(..., description="Ferdighetsnivå")
-
-        @validator('proficiency')
-        def validate_proficiency(cls, v):
-            valid_levels = ['Morsmål', 'Flytende', 'Profesjonelt', 'Begrenset']
-            if v not in valid_levels:
-                raise ValueError(f'Ugyldig språknivå. Må være en av: {valid_levels}')
-            return v
+        proficiency: str = Field(
+            ..., 
+            description="Ferdighetsnivå (f.eks. 'Morsmål', 'Flytende', 'Profesjonelt', 'Begrenset')"
+        )
 
     primary_skills: List[str] = Field(
         ...,
@@ -238,27 +260,26 @@ class ExpertiseInfo(BaseModel):
 # Analyse modeller - Utdanning
 #######################
 
+class Institution(BaseModel):
+    """Utdanningsinstitusjon med grad"""
+    name: Optional[str] = Field(None, description="Navn på institusjon")
+    degree: Optional[str] = Field(None, description="Gradsbetegnelse")
+    field: Optional[str] = Field(None, description="Fagområde/studieretning")
+    year: Optional[int] = Field(None, description="Avslutningsår")
+
+    @validator('year')
+    def validate_year(cls, v):
+        if v < 1950 or v > datetime.now().year:
+            raise ValueError(f'Ugyldig år: {v}')
+        return v
+
 class EducationInfo(BaseModel):
     """Oversikt over utdanning og akademiske prestasjoner"""
-    class Institution(BaseModel):
-        """Utdanningsinstitusjon med grad"""
-        name: str = Field(..., description="Navn på institusjon")
-        degree: str = Field(..., description="Gradsbetegnelse")
-        field: str = Field(..., description="Fagområde/studieretning")
-        year: int = Field(..., description="Avslutningsår")
-
-        @validator('year')
-        def validate_year(cls, v):
-            if v < 1950 or v > datetime.now().year:
-                raise ValueError(f'Ugyldig år: {v}')
-            return v
-
-    highest_degree: str = Field(...)
-    field_of_study: str = Field(...)
-    institutions: List[Institution] = Field(...)
-    continuing_education: List[str] = Field(...)
-    graduation_year: Optional[int] = Field(None)
-    academic_achievements: List[str] = Field(...)
+    highest_degree: Optional[str] = Field(None, description="Høyeste oppnådde grad")
+    field_of_study: Optional[str] = Field(None, description="Hovedfagområde/studieretning")
+    institutions: Optional[List[Institution]] = Field(None, description="Liste over utdanningsinstitusjoner")
+    continuing_education: Optional[List[str]] = Field(default_factory=list, description="Etterutdanning og kurs")
+    academic_achievements: Optional[List[str]] = Field(default_factory=list, description="Akademiske prestasjoner og utmerkelser")
 
 #######################
 # Analyse modeller - Nettverk
@@ -283,8 +304,9 @@ class NetworkInfo(BaseModel):
     )
     engagement_level: str = Field(
         ...,
-        description="Kvalitativ vurdering av aktivitetsnivå og engasjement i "
-        "nettverket. Vurder hyppighet og kvalitet på interaksjoner"
+        description="Kvalitativ vurdering av aktivitetsnivå og engasjement i nettverket. "
+        "Vurder hyppighet og kvalitet på interaksjoner. "
+        "Bruk 'Høy', 'Moderat', 'Lav' eller 'Inaktiv'"
     )
     geographical_reach: List[str] = Field(
         ...,
@@ -308,13 +330,6 @@ class NetworkInfo(BaseModel):
         description="Analyse av hvordan personen bygger og vedlikeholder "
         "profesjonelle relasjoner. Beskriv typiske mønstre i nettverksbygging"
     )
-
-    @validator('engagement_level')
-    def validate_engagement(cls, v):
-        valid_levels = ['Høy', 'Moderat', 'Lav', 'Inaktiv']
-        if v not in valid_levels:
-            raise ValueError(f'Ugyldig engasjementsnivå. Må være en av: {valid_levels}')
-        return v
 
 #######################
 # Analyse modeller - Personlighet
@@ -494,11 +509,11 @@ class PersonalityInfo(BaseModel):
     3. Vise konsistens på tvers av ulike situasjoner og over tid
     4. Dokumentere kilder og grunnlag for vurderinger
     """
-    communication: CommunicationStyle
-    work_style: WorkStyle
-    personality_traits: PersonalityTraits
-    motivations: Motivations
-    social_dynamics: SocialDynamics
+    communication: Optional[CommunicationStyle] = Field(None, description="Analyse av kommunikasjonsstil og -mønstre")
+    work_style: Optional[WorkStyle] = Field(None, description="Analyse av arbeidsstil og tilnærming")
+    personality_traits: Optional[PersonalityTraits] = Field(None, description="Dominerende personlighetstrekk")
+    motivations: Optional[Motivations] = Field(None, description="Drivkrefter og motivasjonsfaktorer")
+    social_dynamics: Optional[SocialDynamics] = Field(None, description="Sosiale og profesjonelle samhandlingsmønstre")
 
 #######################
 # Analyse modeller - Meta
@@ -517,7 +532,8 @@ class MetaInfo(BaseModel):
     confidence_score: Optional[str] = Field(
         None,
         description="Samlet vurdering av datakvalitet og analysesikkerhet. "
-        "Vurder mengde, konsistens og kvalitet på tilgjengelig data"
+        "Vurder mengde, konsistens og kvalitet på tilgjengelig data. "
+        "Bruk 'Høy', 'Medium' eller 'Lav'"
     )
     priority_score: Optional[float] = Field(
         None, 
@@ -550,59 +566,31 @@ class MetaInfo(BaseModel):
         le=1
     )
 
-    @validator('confidence_score')
-    def validate_confidence(cls, v):
-        if v is not None:
-            valid_scores = ['Høy', 'Medium', 'Lav']
-            if v not in valid_scores:
-                raise ValueError(f'Ugyldig confidence score. Må være en av: {valid_scores}')
-        return v
-
-class PriorityUser(BaseModel):
-    """Prioritert bruker med score og begrunnelse"""
-    email: str = Field(..., description="Brukerens email")
-    score: float = Field(..., description="Prioriteringsscore (0-1)", ge=0, le=1)
-    reason: str = Field(..., description="Begrunnelse for score")
-
-    @validator('email')
-    def validate_email(cls, v):
-        if '@' not in v:
-            raise ValueError('Ugyldig email format')
-        return v.lower()  # Standardiser til lowercase
-
-class PriorityAnalysis(BaseModel):
-    """Resultat av prioriteringsanalyse"""
-    users: List[PriorityUser] = Field(..., description="Liste over prioriterte brukere")
-    
-    @validator('users')
-    def validate_users(cls, v):
-        if not v:
-            raise ValueError('Prioriteringsanalyse må inneholde minst én bruker')
-        return v
-
 #######################
 # User modellen
 #######################
 
-class User(BaseModel):
-    """
-    Representerer en bruker med all analysert informasjon.
-    Bygges opp gradvis gjennom analyseprosessen.
-    """
-    # Basis info (fra Hunter)
-    email: str
-    linkedin_url: Optional[str] = None
-    
-    # Analyse-resultater (nå direkte i User-modellen)
-    basic_info: Optional[BasicInfo] = None
-    career: Optional[CareerInfo] = None
-    expertise: Optional[ExpertiseInfo] = None
-    education: Optional[EducationInfo] = None
-    network: Optional[NetworkInfo] = None
-    personality: Optional[PersonalityInfo] = None
-    meta: Optional[MetaInfo] = None
-    
-    # Tracking
-    sources: List[str] = Field(default_factory=list)
-    last_updated: datetime = Field(default_factory=datetime.now)
+class PriorityUser(BaseModel):
+    """Prioritert bruker med score og begrunnelse"""
+    email: str = Field(
+        ..., 
+        description="Brukerens email (må være gyldig format, konverteres til lowercase)"
+    )
+    score: float = Field(
+        ..., 
+        description="Prioriteringsscore (0-1)", 
+        ge=0, 
+        le=1
+    )
+    reason: str = Field(
+        ..., 
+        description="Begrunnelse for score"
+    )
+
+class PriorityAnalysis(BaseModel):
+    """Resultat av prioriteringsanalyse"""
+    users: List[PriorityUser] = Field(
+        ..., 
+        description="Liste over prioriterte brukere (må inneholde minst én bruker)"
+    )
 

@@ -13,7 +13,6 @@ from tools import linkedin_tool, hunter_tool
 from prompts import (
     ANALYSIS_PROMPT, 
     PRIORITY_PROMPT,
-    validate_llm_output,
     get_model_schema,
 )
 from models import (
@@ -22,11 +21,8 @@ from models import (
     HunterResponse,
     User,
     AgentState,
-    MessageList,
-    UserList
 )
 import logging
-from langgraph.prebuilt import ToolNode, tools_condition
 from langchain.prompts import ChatPromptTemplate
 from system_prompts import ANALYSIS_SYSTEM_PROMPT, PRIORITY_SYSTEM_PROMPT
 
@@ -50,23 +46,6 @@ llm = ChatOpenAI(
     temperature=float(os.getenv("TEMPERATURE", DEFAULT_TEMPERATURE))
 )
 
-# Legg til på toppen av filen, etter imports
-def add_users(state: Dict, new_state: Dict) -> Dict:
-    """Reducer for å oppdatere users i state"""
-    state["users"] = new_state.get("users", state["users"])
-    return state
-
-def add_messages(state: Dict, new_state: Dict) -> Dict:
-    """Reducer for å oppdatere messages i state"""
-    state["messages"].extend(new_state.get("messages", []))
-    return state
-
-# Definer state updates
-def update_state(state: Dict, new_state: Dict) -> Dict:
-    """Oppdaterer state med nye verdier"""
-    state.update(new_state)
-    return state
-
 # SCREENING NODE
 @traceable(run_type="chain", name="hunter_collection")
 def collect_hunter_data(state: AgentState, config: RunnableConfig) -> AgentState:
@@ -77,36 +56,22 @@ def collect_hunter_data(state: AgentState, config: RunnableConfig) -> AgentState
             "api_key": os.getenv("HUNTER_API_KEY")
         })
         
-        # Valider response med HunterResponse modell
         validated_data = HunterResponse(**hunter_data)
         
-        users = [
-            {
-                "email": email["value"],
-                "first_name": email.get("first_name"),
-                "last_name": email.get("last_name"),
-                "role": email.get("position"),
-                "linkedin_url": email.get("linkedin"),
-                "confidence": str(email.get("confidence", "")),
-                "sources": ["hunter"]
-            }
-            for email in validated_data.emails
-        ]
-        
         return {
-            "messages": state["messages"] + [
+            "messages": [
                 ToolMessage(
                     tool_call_id="hunter_success",
                     tool_name="hunter",
-                    content=f"Hentet {len(users)} kontakter"
+                    content=f"Hentet {len(validated_data.emails)} kontakter"
                 )
             ],
-            "users": users,
+            "users": [{"email": email["value"], "first_name": email.get("first_name"), "last_name": email.get("last_name"), "role": email.get("position"), "linkedin_url": email.get("linkedin"), "confidence": str(email.get("confidence")) if email.get("confidence") else None, "sources": ["hunter"]} for email in validated_data.emails],
             "config": state["config"]
         }
     except Exception as e:
         return {
-            "messages": state["messages"] + [
+            "messages": [
                 ToolMessage(
                     tool_call_id="hunter_error",
                     tool_name="hunter",
@@ -114,8 +79,18 @@ def collect_hunter_data(state: AgentState, config: RunnableConfig) -> AgentState
                 )
             ],
             "users": [],
-            "config": state["config"]
         }
+
+def extract_json_from_response(content: str) -> str:
+    """Ekstraherer JSON fra en LLM-respons som kan inneholde markdown."""
+    if content.startswith("```"):
+        # Finn slutten av første linje (språk-indikatoren)
+        first_newline = content.find('\n')
+        # Finn slutten av kodeblokken
+        end_marker = content.rfind("```")
+        # Ekstraher bare JSON-innholdet
+        return content[first_newline:end_marker].strip()
+    return content
 
 # PRIORITERING NODE
 @traceable(run_type="chain", name="prioritize_users")
@@ -125,14 +100,13 @@ def prioritize_users(state: AgentState, config: RunnableConfig) -> AgentState:
     
     if not users_with_roles:
         return {
-            "messages": state["messages"] + [HumanMessage(content="Ingen brukere med roller funnet")],
+            "messages": [HumanMessage(content="Ingen brukere med roller funnet")],
             "users": [],
-            "config": state["config"]
         }
     
     try:
-        # Formater meldinger direkte
-        messages = [
+        # Send direkte til LLM uten å gå via state
+        response = llm.invoke([
             SystemMessage(content=PRIORITY_SYSTEM_PROMPT),
             HumanMessage(content=PRIORITY_PROMPT.format(
                 target_role=state['config']['target_role'],
@@ -141,38 +115,51 @@ def prioritize_users(state: AgentState, config: RunnableConfig) -> AgentState:
                 model_schema=get_model_schema(PriorityAnalysis),
                 max_results=state['config'].get('max_results', 5)
             ))
-        ]
-        response = llm.invoke(messages)
-        if isinstance(response, AIMessage):
-            analysis = PriorityAnalysis(**json.loads(response.content))
-        else:
+        ])
+
+        if not isinstance(response, AIMessage):
             raise ValueError(f"Uventet respons type: {type(response)}")
         
-        # Match og oppdater brukere
-        prioritized = []
-        for user in users_with_roles:
-            if user["email"] in {p.email for p in analysis.users}:
-                priority_user = next(p for p in analysis.users if p.email == user["email"])
-                prioritized.append({
-                    **user,
-                    "priority_score": priority_user.score,
-                    "priority_reason": priority_user.reason,
-                    "sources": user["sources"] + ["prioritized"]
-                })
+        # Logg responsen for debugging
+        logging.info(f"LLM prioriteringsrespons: {response.content[:500]}...")
         
-        return {
-            "messages": state["messages"] + [
-                AIMessage(content=f"Prioriterte {len(prioritized)} brukere")
-            ],
-            "users": prioritized,
-            "config": state["config"]
-        }
+        try:
+            content = extract_json_from_response(response.content)
+            analysis = PriorityAnalysis(**json.loads(content))
+            
+            # Match og oppdater brukere
+            prioritized = []
+            for user in users_with_roles:
+                if user["email"] in {p.email for p in analysis.users}:
+                    priority_user = next(p for p in analysis.users if p.email == user["email"])
+                    prioritized.append({
+                        **user,
+                        "priority_score": priority_user.score,
+                        "priority_reason": priority_user.reason,
+                        "sources": user["sources"] + ["prioritized"]
+                    })
+            
+            return {
+                "messages": [
+                    AIMessage(content=f"Prioriterte {len(prioritized)} brukere")
+                ],
+                "users": [{"email": user["email"], "priority_score": user["priority_score"], "priority_reason": user["priority_reason"], "sources": user["sources"]} for user in prioritized],
+            }
+        except json.JSONDecodeError as je:
+            error_msg = "Kunne ikke parse prioriteringsrespons som JSON"
+            logging.error(f"{error_msg}: {str(je)}")
+            logging.error(f"Rårespons: {response.content[:1000]}...")
+            raise ValueError(error_msg)
+        except Exception as ve:
+            error_msg = "Validering av prioriteringsrespons feilet"
+            logging.error(f"{error_msg}: {str(ve)}")
+            raise ValueError(error_msg)
+            
     except Exception as e:
         logging.error(f"Feil i prioritering: {str(e)}")
         return {
-            "messages": state["messages"] + [HumanMessage(content=f"Feil i prioritering: {str(e)}")],
+            "messages": [HumanMessage(content=f"Feil i prioritering: {str(e)}")],
             "users": state["users"],
-            "config": state["config"]
         }
 
 # LINKEDIN DATA NODE
@@ -185,9 +172,8 @@ def get_linkedin_data(state: AgentState, config: RunnableConfig) -> AgentState:
     
     if not prioritized_users:
         return {
-            "messages": state["messages"] + [HumanMessage(content="Ingen brukere å berike")],
+            "messages": [HumanMessage(content="Ingen brukere å berike")],
             "users": state["users"],
-            "config": state["config"]
         }
     
     enriched = []
@@ -198,7 +184,7 @@ def get_linkedin_data(state: AgentState, config: RunnableConfig) -> AgentState:
             linkedin_data = linkedin_tool.invoke({"linkedin_url": user["linkedin_url"]})
             enriched_user = {
                 **user,
-                "linkedin_raw_data": linkedin_data,  # Lagrer hele responsen
+                "linkedin_raw_data": linkedin_data["data"],
                 "sources": user["sources"] + ["linkedin"]
             }
             enriched.append(enriched_user)
@@ -218,13 +204,9 @@ def get_linkedin_data(state: AgentState, config: RunnableConfig) -> AgentState:
                 )
             )
     
-    # Oppdater state med alle brukere - både de som ble beriket og de som ikke ble det
-    all_users = [u for u in state["users"] if u not in prioritized_users] + enriched
-    
     return {
-        "messages": state["messages"] + messages,
-        "users": all_users,
-        "config": state["config"]
+        "messages": messages,
+        "users": enriched,
     }
 
 # ANALYSE NODE
@@ -237,9 +219,8 @@ def analyze_profiles(state: AgentState, config: RunnableConfig) -> AgentState:
     
     if not users_to_analyze:
         return {
-            "messages": state["messages"] + [HumanMessage(content="Ingen profiler å analysere")],
+            "messages": [HumanMessage(content="Ingen profiler å analysere")],
             "users": state["users"],
-            "config": state["config"]
         }
     
     analyzed = []
@@ -247,52 +228,71 @@ def analyze_profiles(state: AgentState, config: RunnableConfig) -> AgentState:
     
     for user in users_to_analyze:
         try:
-            # Send rådata direkte til analyse
-            messages = [
+            # Send rådata direkte til analyse - system message er nå utenfor state
+            response = llm.invoke([
                 SystemMessage(content=ANALYSIS_SYSTEM_PROMPT),
                 HumanMessage(content=ANALYSIS_PROMPT.format(
                     raw_profile=json.dumps(user["linkedin_raw_data"], indent=2),
                     target_role=state["config"]["target_role"],
                     model_schema=get_model_schema(User)
                 ))
-            ]
-            response = llm.invoke(messages)
-            if isinstance(response, AIMessage):
-                analysis_results = validate_llm_output(response.content, User)
-            else:
+            ])
+            
+            if not isinstance(response, AIMessage):
                 raise ValueError(f"Uventet respons type: {type(response)}")
             
-            analyzed_user = {
-                **user,
-                **analysis_results,
-                "sources": user["sources"] + ["analyzed"]
-            }
-            # Fjern rådata etter analyse
-            analyzed_user.pop("linkedin_raw_data", None)
-            analyzed.append(analyzed_user)
-            messages.extend([
-                ToolMessage(
-                    tool_call_id=f"analyze_{user['email']}",
-                    tool_name="analyze",
-                    content=f"Analyserte profil for {user['email']}"
+            # Logg responsen for debugging
+            logging.info(f"LLM respons for {user['email']}: {response.content[:500]}...")
+                
+            try:
+                content = extract_json_from_response(response.content)
+                analysis_results = json.loads(content)
+                logging.info(f"Vellykket JSON parsing for {user['email']}")
+                
+                # La modellen validere dataene og konverter til dict
+                analysis_results = User(**analysis_results).dict()
+                logging.info(f"Vellykket validering for {user['email']}")
+                
+                # Behold bare spesifikke felter fra original bruker
+                analyzed_user = {
+                    **analysis_results,  # Nye data først
+                    "sources": user["sources"] + ["analyzed"]
+                }
+                # Fjern rådata etter analyse
+                analyzed_user.pop("linkedin_raw_data", None)
+                analyzed.append(analyzed_user)
+                
+                messages.append(
+                    ToolMessage(
+                        tool_call_id=f"analyze_{user['email']}",
+                        tool_name="analyze",
+                        content=f"Analyserte profil for {user['email']}"
+                    )
                 )
-            ])
+            except json.JSONDecodeError as je:
+                error_msg = f"Kunne ikke parse JSON fra LLM respons for {user['email']}: {str(je)}"
+                logging.error(error_msg)
+                logging.error(f"Rårespons: {response.content[:1000]}...")
+                raise ValueError(error_msg)
+            except Exception as ve:
+                error_msg = f"Validering feilet for {user['email']}: {str(ve)}"
+                logging.error(error_msg)
+                raise ValueError(error_msg)
+                
         except Exception as e:
+            error_msg = f"Feil ved analyse av {user['email']}: {str(e)}"
+            logging.error(error_msg)
             messages.append(
                 ToolMessage(
                     tool_call_id=f"analyze_error_{user['email']}",
                     tool_name="analyze",
-                    content=f"Feil: {str(e)}"
+                    content=error_msg
                 )
             )
     
-    # Behold brukere som ikke ble analysert
-    all_users = [u for u in state["users"] if u not in users_to_analyze] + analyzed
-    
     return {
-        "messages": state["messages"] + messages,
-        "users": all_users,
-        "config": state["config"]
+        "messages": messages,
+        "users": analyzed,
     }
 
 # Oppdater workflow
@@ -305,7 +305,6 @@ def create_workflow() -> StateGraph:
     workflow.add_node("prioritize", prioritize_users)
     workflow.add_node("get_linkedin_data", get_linkedin_data)
     workflow.add_node("analyze", analyze_profiles)
-    workflow.add_node("tools", ToolNode([linkedin_tool, hunter_tool]))
     
     # Sett entry point
     workflow.set_entry_point("collect")
@@ -314,21 +313,12 @@ def create_workflow() -> StateGraph:
     workflow.add_edge("collect", "prioritize")
     workflow.add_edge("prioritize", "get_linkedin_data")
     workflow.add_edge("get_linkedin_data", "analyze")
-    workflow.add_edge("analyze", "tools")
-    workflow.add_edge("tools", "analyze")
+    workflow.add_edge("analyze", "__end__")
     
-    # Betinget routing
+    # Betinget routing - stopp hvis ingen brukere funnet
     workflow.add_conditional_edges(
         "collect",
         lambda s: "prioritize" if s["users"] else "__end__"
-    )
-    workflow.add_conditional_edges(
-        "analyze",
-        tools_condition,
-        {
-            "tools": "tools",
-            "__end__": "__end__"
-        }
     )
 
     return workflow.compile()
