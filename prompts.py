@@ -1,82 +1,72 @@
-from pydantic import BaseModel, Field
-from typing import List, Dict
+from typing import Type, Dict, Any
+import json
+from pydantic import BaseModel
+from models import (
+    User, BasicInfo, CareerInfo, ExpertiseInfo, 
+    EducationInfo, NetworkInfo, PersonalityInfo, MetaInfo
+)
 
-LINKEDIN_ANALYSIS_PROMPT = """Analyser denne LinkedIn profilen for rollen {role}.
+def get_model_schema(model_class: Type[BaseModel]) -> str:
+    """Henter JSON schema for en modell i lesbart format"""
+    schema = model_class.model_json_schema()
+    return json.dumps(schema, indent=2, ensure_ascii=False)
 
-Returner følgende felter i JSON format:
-{{
-    "summary": "En kort profesjonell oppsummering basert på all tilgjengelig data",
-    "experience_years": 0,
-    "current_company_years": 0.0,
-    "key_skills": [],
-    "leadership_experience": false,
-    "education_level": "Velg én: Videregående, Bachelor, Master, PhD, eller Ukjent",
-    "profile_type": "",
-    "personality_traits": [
-        {{"trait": "", "evidence": ""}}
-    ],
-    "career_pattern": {{
-        "trajectory": "Oppadgående/Stabil/etc",
-        "changes": "Hyppige/Sjeldne jobbskifter",
-        "focus": "Hovedfokus i karrieren"
-    }},
-    "education_pattern": {{
-        "focus": "Teknisk/Forretning/etc",
-        "progression": "Pågående/Avsluttet",
-        "relevance": "Høy/Medium/Lav"
-    }},
-    "network_strength": {{
-        "followers": 0,
-        "connections": 0,
-        "engagement": "Høy/Medium/Lav"
-    }},
-    "fun_facts": []
-}}
+def get_nested_field_descriptions(model_class: Type[BaseModel]) -> str:
+    """Henter feltbeskrivelser for en modell med sub-modeller"""
+    descriptions = []
+    for field_name, field_info in model_class.model_fields.items():
+        if hasattr(field_info.annotation, 'model_fields'):
+            descriptions.append(f"\n{field_name.upper()}:")
+            sub_model = field_info.annotation
+            for sub_field, sub_info in sub_model.model_fields.items():
+                desc = sub_info.description or "Ingen beskrivelse tilgjengelig"
+                descriptions.append(f"- {sub_field}: {desc}")
+        else:
+            desc = field_info.description or "Ingen beskrivelse tilgjengelig"
+            descriptions.append(f"- {field_name}: {desc}")
+    return "\n".join(descriptions)
 
-Profil data:
-{linkedin_data}
+def validate_llm_output(output: str, model_class: Type[BaseModel]) -> Dict[str, Any]:
+    """Validerer og konverterer LLM output mot modell"""
+    try:
+        data = json.loads(output)
+        validated = model_class(**data)
+        return validated.model_dump()
+    except Exception as e:
+        raise ValueError(f"Ugyldig output format: {str(e)}")
 
-NB: 
-- Skriv all analyse på norsk
-- Utdanningsnivå må være ett av følgende: Videregående, Bachelor, Master, PhD, eller Ukjent
-- Antall år i nåværende bedrift skal rundes til nærmeste halve år
+ANALYSIS_PROMPT = """
+Utfør en komplett analyse av denne profilen med fokus på B2B-salgspotensial.
+
+PROFIL:
+{raw_profile}
+
+MÅLROLLE/PRODUKT:
+{target_role}
+
+OUTPUT FORMAT:
+VIKTIG: Returner kun et gyldig JSON-objekt som følger denne modellen:
+{model_schema}
+
 """
 
-PRIORITY_ANALYSIS_PROMPT = """Analyser disse personene for å finne de som har rollen: {role}.
+PRIORITY_PROMPT = """
+Evaluer og prioriter disse prospektene for {target_role}.
 
-Personer å vurdere:
-{users}
+PROSPEKTER:
+{prospects}
 
-For hver person, gjør en helhetlig vurdering basert på:
+TILGJENGELIG DATA:
+{available_data}
 
-KRITISKE FAKTORER:
-- Rolle-match: Har personen en stilling/tittel som matcher målrollen vi leter etter?
-- LinkedIn-profil: Må ha en gyldig LinkedIn URL for videre verifisering
-- Data-kvalitet: Vurder confidence-score og mengde tilgjengelig informasjon
+PRIORITERINGSKRITERIER:
+- Beslutningsmyndighet og innflytelse
+- Match mot målrollen/produktet
+- Timing og tilgjengelighet
+- Datakvalitet og aktualitet
 
-VURDERING:
-- Gi en score fra 0.0 til 1.0 basert på hvor godt nåværende rolle matcher
-- Høyere score til personer som har en rolle/tittel som direkte matcher det vi leter etter
-- Lavere score til personer med roller som er uklare eller ikke relevante
-- Personer uten LinkedIn-profil skal automatisk få score 0.0
+VIKTIG: Returner kun et gyldig JSON-objekt som følger denne modellen:
+{model_schema}
 
-Returner de {max_results} mest relevante personene i JSON format:
-{{
-    "users": {{
-        "person@eksempel.no": {{
-            "score": 0.85,
-            "reason": "Detaljert begrunnelse som inkluderer:
-                      - Hvorfor personens nåværende rolle matcher det vi leter etter
-                      - Kvaliteten på tilgjengelig data
-                      - Andre relevante observasjoner"
-        }}
-    }}
-}}
-
-NB: 
-- Vi leter etter personer som HAR denne rollen nå, ikke potensielle kandidater
-- Prioriter direkte rolle-match over andre faktorer
-- Begrunn tydelig hvorfor hver persons nåværende rolle er relevant
-- Skriv all begrunnelse på norsk
-- Tenk på at disse personene skal analyseres videre via LinkedIn i neste steg
+max_results: {max_results}
 """ 

@@ -1,17 +1,17 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from typing import List, Optional
-from agent import app as workflow_app, User, get_config
+from typing import List, Dict, Any
+from agent import app as workflow_app, get_config
+from models import SearchConfig, User
 
-class ProspectRequest(BaseModel):
+class SearchRequest(BaseModel):
     domain: str
     target_role: str
-    max_results: Optional[int] = 5
-    search_depth: Optional[int] = 1
+    max_results: int = 5
 
-class ProspectResponse(BaseModel):
-    users: List[User]
-    message: str
+class SearchResponse(BaseModel):
+    messages: List[Dict[str, Any]]
+    users: List[Dict[str, Any]]
 
 app = FastAPI(
     title="Prospect Agent API",
@@ -19,34 +19,26 @@ app = FastAPI(
     version="1.0.0"
 )
 
-@app.post("/prospects", response_model=ProspectResponse)
-async def find_prospects(request: ProspectRequest):
-    """Finn og analyser relevante kontakter basert på domene og målrolle."""
+@app.post("/search", response_model=SearchResponse)
+async def search_prospects(request: SearchRequest):
     try:
         result = workflow_app.invoke({
             "messages": [],
-            "config": {
-                "domain": request.domain,
-                "target_role": request.target_role,
-                "max_results": request.max_results,
-                "search_depth": request.search_depth
-            },
-            "users": []
+            "users": [],
+            "config": SearchConfig(
+                domain=request.domain,
+                target_role=request.target_role,
+                max_results=request.max_results
+            )
         }, config=get_config())
         
-        # Filtrer ut bare de som er ferdig analysert
-        analyzed_users = [
-            user for user in result["users"] 
-            if "linkedin_analyzed" in user.get("sources", [])
-        ]
-        
-        return ProspectResponse(
-            users=analyzed_users,
-            message=f"Fant {len(analyzed_users)} relevante kontakter med full analyse"
-        )
-        
+        return {
+            "messages": [msg.dict() for msg in result["messages"]],
+            "users": result["users"]
+        }
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Feil under prosessering: {str(e)}"
-        ) 
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/")
+async def root():
+    return {"message": "Velkommen til Prospect Agent API"} 
