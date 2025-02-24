@@ -37,22 +37,80 @@ class SearchConfig(TypedDict):
     max_results: int
 
 def merge_users(current: List[Dict], update: List[Dict]) -> List[Dict]:
-    """Merger brukere basert på email som nøkkel."""
-    user_map = {u["email"]: u for u in current}
+    """Merger brukere basert på email eller linkedin_url som nøkkel."""
+    # Lag map med både email og linkedin_url som nøkler
+    user_map = {}
+    user_refs = {}  # Hold styr på alle referanser til samme bruker
+    
+    for user in current:
+        refs = []
+        if user.get("email"):
+            user_map[user["email"]] = user
+            refs.append(user["email"])
+        if user.get("linkedin_url"):
+            linkedin_url = user["linkedin_url"].rstrip('/')
+            user_map[linkedin_url] = user
+            refs.append(linkedin_url)
+        # Lagre alle referanser til denne brukeren
+        for ref in refs:
+            user_refs[ref] = refs
     
     for user in update:
-        email = user["email"]
-        if email in user_map:
+        # Finn alle mulige nøkler for denne brukeren
+        refs = []
+        if user.get("email"):
+            refs.append(user["email"])
+        if user.get("linkedin_url"):
+            refs.append(user["linkedin_url"].rstrip('/'))
+        
+        if not refs:
+            continue
+        
+        # Sjekk om brukeren allerede finnes
+        existing_key = next((ref for ref in refs if ref in user_map), None)
+        
+        if existing_key:
+            # Hent alle referanser til eksisterende bruker
+            all_refs = user_refs.get(existing_key, [])
+            
             # Merge med eksisterende bruker
-            user_map[email] = {
-                **user_map[email],  # Eksisterende data
-                **{k: v for k, v in user.items() if v is not None}  # Nye data
+            merged_user = {
+                **user_map[existing_key],  # Eksisterende data
+                **{k: v for k, v in user.items() if v is not None and (
+                    k not in user_map[existing_key] or  # Ny felt
+                    user_map[existing_key][k] is None or  # Eksisterende felt er None
+                    (k == "sources" and isinstance(v, list))  # Special case for sources
+                )}
             }
+            
+            # Special handling for sources
+            if "sources" in user and "sources" in user_map[existing_key]:
+                merged_user["sources"] = list(set(
+                    user_map[existing_key]["sources"] + user["sources"]
+                ))
+            
+            # Oppdater alle referanser til denne brukeren
+            for ref in all_refs:
+                user_map[ref] = merged_user
         else:
             # Ny bruker
-            user_map[email] = user
+            for ref in refs:
+                user_map[ref] = user
+                user_refs[ref] = refs
     
-    return list(user_map.values())
+    # Fjern duplikater
+    seen = set()
+    unique_users = []
+    for user in user_map.values():
+        identifier = tuple(sorted([
+            user.get("email", ""),
+            (user.get("linkedin_url") or "").rstrip('/')
+        ]))
+        if identifier not in seen:
+            seen.add(identifier)
+            unique_users.append(user)
+    
+    return unique_users
 
 class State(TypedDict):
     messages: Annotated[List[BaseMessage], add]
