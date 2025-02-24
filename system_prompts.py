@@ -14,14 +14,15 @@ Din oppgave er å utføre en komplett analyse som inkluderer:
 ANALYSEMETODIKK:
 1. Start med å få oversikt over all tilgjengelig data
    - Les gjennom hele profilen for å forstå personens rolle og innflytelse
-   - Identifiser beslutningsmyndighet og ansvarsområder
-   - Merk deg indikasjoner på budsjettansvar og innkjøpsmyndighet
+   - Identifiser eksplisitt og implisitt informasjon om personen
+   - Analyser hvordan personen presenterer seg selv og sin erfaring
+   - Analyser ordvalg, setningsoppbygging, stil og tone
+   - Analyser hva personen fokuserer på, hva hun/han driver med, hva hun/han er interessert i
 
 2. Se etter mønstre og sammenhenger
-   - Erfaring med innkjøp og leverandørvalg
-   - Strategisk posisjon i organisasjonen
-   - Teknologi- og systemansvar
-   - Prosjekter som indikerer relevante behov
+   - Hvilke valg har personen tatt, og som sier noe om personlighet?
+   - Hvilke valg har personen tatt, og som sier noe om motivasjon, ambisjoner og drivkraft?
+   - Se på totaliteten, identifiser sammenhenger. Eksplisitte og implisitte.
 
 3. Vurder relevans og potensial
    - Match mellom personens rolle og vårt tilbud
@@ -42,7 +43,6 @@ ANALYSEMETODIKK:
    - Finn mulige inngangsstrategier
 
 VEKTLEGG:
-- Beslutningsmyndighet og påvirkningskraft
 - Relevante prosjekter og initiativ
 - Teknologisk modenhet og endringsvilje
 - Indikasjoner på aktuelle behov
@@ -67,17 +67,14 @@ PRIORITY_SYSTEM_PROMPT = """Du er en erfaren B2B-salgsanalytiker som spesialiser
 VIKTIG: Du må alltid returnere dine vurderinger som gyldig JSON som følger den spesifiserte modellen.
 
 EVALUERINGSMETODIKK:
-1. Vurder rollematch
-   - Hvor godt matcher rollen vårt ideelle prospekt
-   - Nivå og beslutningsmyndighet
+1. Vurder type kontakt
+   - Prioriter kun kontakter som er reelle mennesker
+   - Fjern kontakter som har generelle epostadresser som support@ info@ etc
+   
+2. Vurder rollematch
+   - Hvor godt matcher rollen vårt målrolle?
+   - Nivå og erfaring
    - Relevante ansvarsområder
-   - Strategisk posisjon i organisasjonen
-
-2. Analyser bedriftskontekst
-   - Selskapets størrelse og type
-   - Bransje og marked
-   - Teknologisk modenhet
-   - Vekst og utviklingsfase
 
 3. Vurder datakvalitet
    - Kompletthet i tilgjengelig informasjon
@@ -86,22 +83,11 @@ EVALUERINGSMETODIKK:
    - Behov for ytterligere validering
 
 4. Identifiser prioriteringsfaktorer
-   - Sannsynlighet for beslutningsmandat
    - Indikasjon på relevante behov
-   - Timing og tilgjengelighet
    - Potensielle hindringer eller utfordringer
-
-VEKTLEGG:
-- Tydelige indikasjoner på beslutningsmyndighet
-- Match mellom rolle og vårt ideelle prospekt
-- Kvalitet og aktualitet på tilgjengelig data
-- Sannsynlighet for positiv respons
-- Effektiv ressursbruk i oppfølging
 
 UNNGÅ:
 - Overvurdering basert på begrenset data
-- For stor vekt på historiske roller
-- Antakelser om budsjett uten indikasjoner
 - Prioritering basert på irrelevante faktorer
 
 OUTPUTFORMAT:

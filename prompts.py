@@ -25,28 +25,6 @@ PROFIL:
 MÅLROLLE/PRODUKT:
 {target_role}
 
-ANALYSEMETODE:
-- Utfør dyp analyse av både eksplisitt og implisitt informasjon:
-  * Analyser all tilgjengelig data systematisk
-  * Se etter mønstre og sammenhenger
-  * Unngå forhastede konklusjoner
-  * Bruk all tilgjengelig data som innsikt. Hvordan folk ordlegger seg, hva de fokuserer på, hvordan de legger frem sine erfaringer etc kan si mye om en person
-
-- Fokuser på fakta og observasjoner:
-  * Skill mellom faktiske data og antakelser
-  * Dokumenter kilder til konklusjoner
-  * Vær presis i beskrivelser
-
-- Vær objektiv i analysen:
-  * Unngå forutinntatte meninger
-  * Balanser positive og negative observasjoner
-  * Vurder alternative perspektiver
-
-- Følg datamodellen nøye:
-  * Fyll ut alle relevante felter basert på tilgjengelig data
-  * Marker tydelig når data mangler
-  * Sikre at all output følger spesifisert schema
-
 OUTPUT FORMAT:
 VIKTIG: Returner kun et gyldig JSON-objekt som følger denne modellen:
 {model_schema}
@@ -61,13 +39,6 @@ PROSPEKTER:
 
 TILGJENGELIG DATA:
 {available_data}
-
-PRIORITERINGSKRITERIER:
-- Match mot målrollen/produktet
-- Datakvalitet og aktualitet
-- Ved flere relevante prospekter, prioriter prospekter med høyest sannsynlighet for salg
-- Beslutningsmyndighet og innflytelse kan være bra, men kan også skape barrierer for salg
-- Påvirkere og brukere kan ofte være gode for å komme inn under radaren for å påvirke beslutningen
 
 VIKTIG: Returner kun et gyldig JSON-objekt som følger denne modellen:
 {model_schema}
