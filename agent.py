@@ -20,7 +20,7 @@ from models import (
     PriorityAnalysis,
     HunterResponse,
     User,
-    AgentState,
+    State,
 )
 import logging
 from langchain.prompts import ChatPromptTemplate
@@ -48,7 +48,7 @@ llm = ChatOpenAI(
 
 # SCREENING NODE
 @traceable(run_type="chain", name="hunter_collection")
-def collect_hunter_data(state: AgentState, config: RunnableConfig) -> AgentState:
+def collect_hunter_data(state: dict, config: RunnableConfig) -> dict:
     """Henter kontakter fra Hunter.io"""
     try:
         hunter_data = hunter_tool.invoke({
@@ -94,23 +94,24 @@ def extract_json_from_response(content: str) -> str:
 
 # PRIORITERING NODE
 @traceable(run_type="chain", name="prioritize_users")
-def prioritize_users(state: AgentState, config: RunnableConfig) -> AgentState:
+def prioritize_users(state: dict, config: RunnableConfig) -> dict:
     """Prioriterer brukere basert på deres egnethet for målrollen."""
-    users_with_roles = [u for u in state["users"] if u.get("role")]
+    # Hent alle brukere fra state
+    all_users = state["users"]
     
-    if not users_with_roles:
+    if not all_users:
         return {
-            "messages": [HumanMessage(content="Ingen brukere med roller funnet")],
+            "messages": [HumanMessage(content="Ingen brukere å prioritere")],
             "users": [],
+            "config": state["config"]
         }
     
     try:
-        # Send direkte til LLM uten å gå via state
         response = llm.invoke([
             SystemMessage(content=PRIORITY_SYSTEM_PROMPT),
             HumanMessage(content=PRIORITY_PROMPT.format(
                 target_role=state['config']['target_role'],
-                prospects=json.dumps(users_with_roles, indent=2),
+                prospects=json.dumps(all_users, indent=2),
                 available_data=json.dumps({"domain": state['config']['domain']}, indent=2),
                 model_schema=get_model_schema(PriorityAnalysis),
                 max_results=state['config'].get('max_results', 5)
@@ -127,23 +128,26 @@ def prioritize_users(state: AgentState, config: RunnableConfig) -> AgentState:
             content = extract_json_from_response(response.content)
             analysis = PriorityAnalysis(**json.loads(content))
             
-            # Match og oppdater brukere
-            prioritized = []
-            for user in users_with_roles:
+            # Start med alle brukere
+            updated_users = all_users.copy()
+            
+            # Oppdater de som ble prioritert
+            for i, user in enumerate(updated_users):
                 if user["email"] in {p.email for p in analysis.users}:
                     priority_user = next(p for p in analysis.users if p.email == user["email"])
-                    prioritized.append({
+                    updated_users[i] = {
                         **user,
                         "priority_score": priority_user.score,
                         "priority_reason": priority_user.reason,
                         "sources": user["sources"] + ["prioritized"]
-                    })
+                    }
             
             return {
                 "messages": [
-                    AIMessage(content=f"Prioriterte {len(prioritized)} brukere")
+                    AIMessage(content=f"Prioriterte {len(analysis.users)} brukere")
                 ],
-                "users": [{"email": user["email"], "priority_score": user["priority_score"], "priority_reason": user["priority_reason"], "sources": user["sources"]} for user in prioritized],
+                "users": updated_users,
+                "config": state["config"]
             }
         except json.JSONDecodeError as je:
             error_msg = "Kunne ikke parse prioriteringsrespons som JSON"
@@ -160,11 +164,12 @@ def prioritize_users(state: AgentState, config: RunnableConfig) -> AgentState:
         return {
             "messages": [HumanMessage(content=f"Feil i prioritering: {str(e)}")],
             "users": state["users"],
+            "config": state["config"]
         }
 
 # LINKEDIN DATA NODE
 @traceable(run_type="chain", name="get_linkedin_data")
-def get_linkedin_data(state: AgentState, config: RunnableConfig) -> AgentState:
+def get_linkedin_data(state: dict, config: RunnableConfig) -> dict:
     """Henter LinkedIn data for prioriterte brukere."""
     prioritized_users = [u for u in state["users"] 
                         if "prioritized" in u.get("sources", [])
@@ -211,7 +216,7 @@ def get_linkedin_data(state: AgentState, config: RunnableConfig) -> AgentState:
 
 # ANALYSE NODE
 @traceable(run_type="chain", name="analyze_profiles")
-def analyze_profiles(state: AgentState, config: RunnableConfig) -> AgentState:
+def analyze_profiles(state: dict, config: RunnableConfig) -> dict:
     """Analyserer LinkedIn profiler."""
     users_to_analyze = [u for u in state["users"] 
                        if "linkedin" in u.get("sources", [])
@@ -298,7 +303,7 @@ def analyze_profiles(state: AgentState, config: RunnableConfig) -> AgentState:
 # Oppdater workflow
 def create_workflow() -> StateGraph:
     """Oppretter workflow."""
-    workflow = StateGraph(AgentState)
+    workflow = StateGraph(State)
     
     # Legg til noder
     workflow.add_node("collect", collect_hunter_data)

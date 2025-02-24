@@ -6,7 +6,8 @@ import os
 from models import (
     LinkedInInput,
     HunterInput,
-    HunterResponse
+    HunterResponse,
+    State
 )
 
 class LinkedInAPIError(Exception):

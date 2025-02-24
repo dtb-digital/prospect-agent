@@ -3,7 +3,7 @@ from typing_extensions import TypedDict
 from pydantic import BaseModel, Field, validator
 from langchain_core.messages import BaseMessage
 from datetime import datetime
-from langgraph.graph import MessagesState
+from langgraph.graph import StateGraph
 from operator import add
 
 #######################
@@ -36,58 +36,29 @@ class SearchConfig(TypedDict):
     target_role: str
     max_results: int
 
-def merge_user_fields(existing: List[Dict], updates: List[Dict]) -> List[Dict]:
-    """Merger brukere basert på email som nøkkel og User-modellen"""
-    user_map = {u["email"]: u for u in existing}
+def merge_users(current: List[Dict], update: List[Dict]) -> List[Dict]:
+    """Merger brukere basert på email som nøkkel."""
+    user_map = {u["email"]: u for u in current}
     
-    for update in updates:
-        email = update["email"]
+    for user in update:
+        email = user["email"]
         if email in user_map:
-            current = user_map[email]
-            # Bare oppdater felter som er definert i User-modellen
-            for field in User.__fields__:
-                if field in update and update[field] is not None:
-                    current[field] = update[field]
-            # Spesialhåndtering av sources
-            if "sources" in update:
-                current["sources"] = list(set(current.get("sources", []) + update["sources"]))
+            # Merge med eksisterende bruker
+            user_map[email] = {
+                **user_map[email],  # Eksisterende data
+                **{k: v for k, v in user.items() if v is not None}  # Nye data
+            }
         else:
-            user_map[email] = update
+            # Ny bruker
+            user_map[email] = user
     
     return list(user_map.values())
 
-class User(BaseModel):
-    """
-    Representerer en bruker med all analysert informasjon.
-    Bygges opp gradvis gjennom analyseprosessen.
-    """
-    email: str
-    linkedin_url: Optional[str] = None
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
-    role: Optional[str] = None
-    confidence: Optional[str] = None
-    
-    # Analyse-resultater
-    location: Optional[Location] = None
-    headline: Optional[str] = Field(None, description="Profesjonell overskrift/tittel fra LinkedIn")
-    profile_image_url: Optional[str] = None
-    about: Optional[str] = Field(None, description="Profesjonell sammendrag/bio")
+class State(TypedDict):
+    messages: Annotated[List[BaseMessage], add]
+    users: Annotated[List[Dict], merge_users]
+    config: Dict
 
-    career: Optional[CareerInfo] = None
-    expertise: Optional[ExpertiseInfo] = None
-    education: Optional[EducationInfo] = None
-    network: Optional[NetworkInfo] = None
-    personality: Optional[PersonalityInfo] = None
-    meta: Optional[MetaInfo] = None
-    
-    # Tracking
-    sources: List[str] = Field(default_factory=list)
-    last_updated: datetime = Field(default_factory=datetime.now)
-
-class AgentState(MessagesState):
-    users: Annotated[List[Dict], merge_user_fields]
-    config: SearchConfig
 
 #######################
 # Basis datamodeller
@@ -594,3 +565,31 @@ class PriorityAnalysis(BaseModel):
         description="Liste over prioriterte brukere (må inneholde minst én bruker)"
     )
 
+class User(BaseModel):
+    """
+    Representerer en bruker med all analysert informasjon.
+    Bygges opp gradvis gjennom analyseprosessen.
+    """
+    email: str
+    linkedin_url: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    role: Optional[str] = None
+    confidence: Optional[str] = None
+    
+    # Analyse-resultater
+    location: Optional[Location] = None
+    headline: Optional[str] = Field(None, description="Profesjonell overskrift/tittel fra LinkedIn")
+    profile_image_url: Optional[str] = None
+    about: Optional[str] = Field(None, description="Profesjonell sammendrag/bio")
+
+    career: Optional[CareerInfo] = None
+    expertise: Optional[ExpertiseInfo] = None
+    education: Optional[EducationInfo] = None
+    network: Optional[NetworkInfo] = None
+    personality: Optional[PersonalityInfo] = None
+    meta: Optional[MetaInfo] = None
+    
+    # Tracking
+    sources: List[str] = Field(default_factory=list)
+    last_updated: datetime = Field(default_factory=datetime.now)

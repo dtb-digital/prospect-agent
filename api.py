@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List, Dict, Any
 from agent import app as workflow_app, get_config
-from models import SearchConfig, User
+from models import SearchConfig, User, State
 
 class SearchRequest(BaseModel):
     domain: str
