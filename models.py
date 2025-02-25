@@ -294,6 +294,8 @@ class Institution(BaseModel):
 
     @validator('year')
     def validate_year(cls, v):
+        if v is None:
+            return v
         if v < 1950 or v > datetime.now().year:
             raise ValueError(f'Ugyldig år: {v}')
         return v
