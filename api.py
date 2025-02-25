@@ -10,8 +10,8 @@ class SearchRequest(BaseModel):
     max_results: int = 5
 
 class SearchResponse(BaseModel):
-    messages: List[Dict[str, Any]]
-    users: List[Dict[str, Any]]
+    """API respons med kun analyserte profiler"""
+    profiles: List[User]
 
 app = FastAPI(
     title="Prospect Agent API",
@@ -32,10 +32,9 @@ async def search_prospects(request: SearchRequest):
             )
         }, config=get_config())
         
-        return {
-            "messages": [msg.dict() for msg in result["messages"]],
-            "users": result["users"]
-        }
+        return SearchResponse(
+            profiles=[User(**user) for user in result["users"] if "analyzed" in user.get("sources", [])]
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

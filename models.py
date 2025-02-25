@@ -139,7 +139,6 @@ class BasicInfo(BaseModel):
     linkedin_url: Optional[str] = Field(None, description="Full URL til LinkedIn-profil")
     location: Location = Field(default_factory=Location)
     profile_image_url: Optional[str] = Field(None, description="URL til profilbilde")
-    about: Optional[str] = Field(None, description="Om-meg tekst fra profilen")
 
 #######################
 # Analyse modeller - Karriere
@@ -634,7 +633,10 @@ class User(BaseModel):
     location: Optional[Location] = None
     headline: Optional[str] = Field(None, description="Profesjonell overskrift/tittel fra LinkedIn")
     profile_image_url: Optional[str] = None
-    about: Optional[str] = Field(None, description="Profesjonell sammendrag/bio")
+    about: Optional[str] = Field(
+        None, 
+        description="Lag en kort og konsis oppsummering av profilen på norsk.Sammenfatt de mest interessante funnene i 3-4 setninger. Ikke gjør det generisk, men gjør det unikt og personlig."
+    )
 
     career: Optional[CareerInfo] = None
     expertise: Optional[ExpertiseInfo] = None
