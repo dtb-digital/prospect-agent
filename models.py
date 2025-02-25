@@ -201,12 +201,7 @@ class CareerInfo(BaseModel):
         description="Detaljert beskrivelse av bransjen selskapet opererer i, "
         "inkludert relevante markedssegmenter og teknologiområder"
     )
-    years_in_role: int = Field(
-        ..., 
-        ge=0,
-        description="Antall år i nåværende stilling, indikerer dybdekunnskap "
-        "og stabilitet i rollen"
-    )
+    years_in_role: Optional[int] = Field(None, description="Antall år i nåværende stilling (positivt tall)")
     years_in_company: int = Field(
         ..., 
         ge=0,
@@ -231,6 +226,8 @@ class CareerInfo(BaseModel):
         description="Liste over konkrete hovedansvarsområder i nåværende rolle, "
         "med fokus på målbare resultater og strategisk betydning"
     )
+    previous_roles: Optional[List[str]] = Field(None, description="Liste over tidligere stillinger")
+    previous_companies: Optional[List[str]] = Field(None, description="Liste over tidligere arbeidsgivere")
 
 #######################
 # Analyse modeller - Kompetanse
@@ -607,9 +604,7 @@ class PriorityUser(BaseModel):
     )
     score: float = Field(
         ..., 
-        description="Prioriteringsscore (0-1)", 
-        ge=0, 
-        le=1
+        description="Prioriteringsscore mellom 0 og 1, der 1 er høyest prioritet"
     )
     reason: str = Field(
         ..., 
