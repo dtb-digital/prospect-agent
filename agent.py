@@ -19,7 +19,8 @@ from models import (
     State,
 )
 from langchain_core.prompts import ChatPromptTemplate
-from system_prompts import ANALYSIS_SYSTEM_PROMPT, PRIORITY_SYSTEM_PROMPT
+from system_prompts import get_analysis_prompt, get_priority_prompt
+from prompt_hub import get_prompt_from_hub
 
 load_dotenv()
 
@@ -40,6 +41,10 @@ llm = ChatOpenAI(
     model_name=os.getenv("MODEL_NAME", DEFAULT_MODEL),
     temperature=float(os.getenv("TEMPERATURE", DEFAULT_TEMPERATURE))
 )
+
+# Hent prompter fra LangSmith
+analysis_prompt = get_analysis_prompt()
+priority_prompt = get_priority_prompt()
 
 # Definer prompts
 ANALYSIS_PROMPT = """
@@ -74,7 +79,7 @@ FORVENTET OUTPUT FORMAT:
 # Bind modeller til strukturert output
 analysis_chain = (
     ChatPromptTemplate.from_messages([
-        ("system", ANALYSIS_SYSTEM_PROMPT),
+        ("system", analysis_prompt),
         ("human", ANALYSIS_PROMPT)
     ])
     | llm.with_structured_output(User, method="json_mode")
@@ -82,7 +87,7 @@ analysis_chain = (
 
 priority_chain = (
     ChatPromptTemplate.from_messages([
-        ("system", PRIORITY_SYSTEM_PROMPT),
+        ("system", priority_prompt),
         ("human", PRIORITY_PROMPT)
     ])
     | llm.with_structured_output(PriorityAnalysis, method="json_mode")
