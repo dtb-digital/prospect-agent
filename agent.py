@@ -335,13 +335,21 @@ def get_config() -> RunnableConfig:
 # Compile workflow
 app = create_workflow()
 
-def analyze_domain(
-    domain: str,
-    target_role: str,
-    max_results: int = 5
-) -> Dict[str, Any]:
-    """Kjør full analyse av et domene."""
-    return app.invoke({
+@traceable(name="analyze_domain", project=os.getenv("LANGCHAIN_PROJECT", "prospect-agent"))
+def analyze_domain(domain: str, target_role: str = None, max_results: int = 5) -> Dict[str, Any]:
+    """
+    Analyser et domene og finn relevante personer basert på målrollen.
+    
+    Args:
+        domain: Domenet som skal analyseres
+        target_role: Målrollen som skal brukes for å finne relevante personer
+        max_results: Maksimalt antall resultater som skal returneres
+        
+    Returns:
+        Dict med analyserte brukere
+    """
+    # Kjør workflowen
+    result = app.invoke({
         "messages": [],
         "users": [],
         "config": SearchConfig(
@@ -349,6 +357,18 @@ def analyze_domain(
             target_role=target_role,
             max_results=max_results
         )
-    })
+    }, config=get_config())
+    
+    # Konverter resultatet til et serialiserbart format
+    serializable_result = {}
+    if "users" in result:
+        serializable_result["users"] = result["users"]
+    
+    # Evaluer resultatet hvis evaluering er aktivert
+    # Importer her for å unngå sirkularitet
+    from evaluate import evaluate_result
+    evaluate_result(domain, target_role, serializable_result)
+    
+    return result
 
 __all__ = ['app', 'get_config', 'analyze_domain']
