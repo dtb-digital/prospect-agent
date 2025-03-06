@@ -9,6 +9,11 @@ from models import (
     HunterResponse,
     State
 )
+import json
+from dotenv import load_dotenv
+from langsmith import traceable
+
+load_dotenv()
 
 class LinkedInAPIError(Exception):
     """Custom error for LinkedIn API issues"""
@@ -92,4 +97,171 @@ hunter_tool = StructuredTool(
     description="Henter kontaktinfo",
     func=get_hunter_data,
     args_schema=HunterInput
-) 
+)
+
+# Attio CRM Tools
+@traceable(name="create_person_in_attio")
+def create_person_in_attio(person_data: str) -> str:
+    """
+    Oppretter en person i Attio CRM.
+    
+    Args:
+        person_data: JSON-streng med persondata i Attio-format
+        
+    Returns:
+        JSON-streng med respons fra Attio API
+    """
+    api_key = os.getenv("ATTIO_API_KEY")
+    
+    if not api_key:
+        return "ATTIO_API_KEY må være satt i .env-filen"
+    
+    url = "https://api.attio.com/v2/objects/people/records"
+    
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+    }
+    
+    try:
+        # Konverter streng til JSON hvis det er en streng
+        if isinstance(person_data, str):
+            data = json.loads(person_data)
+        else:
+            data = person_data
+        
+        response = requests.post(url, headers=headers, json=data)
+        
+        if response.status_code >= 400:
+            return f"Feil ved oppretting av person i Attio: {response.text}"
+        
+        return json.dumps(response.json(), indent=2)
+    
+    except Exception as e:
+        return f"Feil ved oppretting av person i Attio: {str(e)}"
+
+@traceable(name="assert_person_in_attio")
+def assert_person_in_attio(person_data: str) -> str:
+    """
+    Oppretter eller oppdaterer en person i Attio CRM.
+    
+    Args:
+        person_data: JSON-streng med persondata i Attio-format
+        
+    Returns:
+        JSON-streng med respons fra Attio API
+    """
+    api_key = os.getenv("ATTIO_API_KEY")
+    
+    if not api_key:
+        return "ATTIO_API_KEY må være satt i .env-filen"
+    
+    url = "https://api.attio.com/v2/objects/people/records/assert"
+    
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+    }
+    
+    try:
+        # Konverter streng til JSON hvis det er en streng
+        if isinstance(person_data, str):
+            data = json.loads(person_data)
+        else:
+            data = person_data
+        
+        response = requests.post(url, headers=headers, json=data)
+        
+        if response.status_code >= 400:
+            return f"Feil ved oppretting/oppdatering av person i Attio: {response.text}"
+        
+        return json.dumps(response.json(), indent=2)
+    
+    except Exception as e:
+        return f"Feil ved oppretting/oppdatering av person i Attio: {str(e)}"
+
+@traceable(name="create_note_in_attio")
+def create_note_in_attio(note_data: str) -> str:
+    """
+    Oppretter et notat i Attio CRM.
+    
+    Args:
+        note_data: JSON-streng med notatdata i Attio-format
+        
+    Returns:
+        JSON-streng med respons fra Attio API
+    """
+    api_key = os.getenv("ATTIO_API_KEY")
+    
+    if not api_key:
+        return "ATTIO_API_KEY må være satt i .env-filen"
+    
+    url = "https://api.attio.com/v2/notes"
+    
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+    }
+    
+    try:
+        # Konverter streng til JSON hvis det er en streng
+        if isinstance(note_data, str):
+            data = json.loads(note_data)
+        else:
+            data = note_data
+        
+        response = requests.post(url, headers=headers, json=data)
+        
+        if response.status_code >= 400:
+            return f"Feil ved oppretting av notat i Attio: {response.text}"
+        
+        return json.dumps(response.json(), indent=2)
+    
+    except Exception as e:
+        return f"Feil ved oppretting av notat i Attio: {str(e)}"
+
+@traceable(name="get_attio_person_schema")
+def get_attio_person_schema() -> str:
+    """
+    Returnerer skjemaet for personer i Attio CRM.
+    
+    Returns:
+        JSON-streng med skjema
+    """
+    return """
+    {
+      "data": {
+        "values": {
+          "email_addresses": [{"value": "email@example.com"}],
+          "name": [{"value": "Fullt navn"}],
+          "job_title": [{"value": "Stillingstittel"}],
+          "company": [{"value": "Selskap"}],
+          "linkedin": [{"value": "LinkedIn URL"}],
+          "phone_numbers": [{"value": "Telefonnummer"}]
+        }
+      }
+    }
+    """
+
+@traceable(name="get_attio_note_schema")
+def get_attio_note_schema() -> str:
+    """
+    Returnerer skjemaet for notater i Attio CRM.
+    
+    Returns:
+        JSON-streng med skjema
+    """
+    return """
+    {
+      "data": {
+        "parent_object": "people",
+        "parent_record_id": "person_id_her",
+        "title": "Notat-tittel",
+        "format": "plaintext",
+        "content": "Notat-innhold med \\n for linjeskift"
+      }
+    }
+    """ 

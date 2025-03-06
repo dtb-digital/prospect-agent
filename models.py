@@ -1,4 +1,4 @@
-from typing import List, Dict, Optional, Any, Annotated
+from typing import List, Dict, Optional, Any, Annotated, Union, TypedDict, Type
 from typing_extensions import TypedDict
 from pydantic import BaseModel, Field, validator
 from langchain_core.messages import BaseMessage
@@ -10,31 +10,31 @@ from operator import add
 # API og Input/Output modeller
 #######################
 
+class SearchConfig(BaseModel):
+    """Konfigurasjon for søk."""
+    domain: str = Field(..., description="Domenet som skal analyseres")
+    target_role: str = Field(..., description="Målrollen som skal analyseres")
+    max_users: int = Field(10, description="Maksimalt antall brukere å returnere")
+
 class LinkedInInput(BaseModel):
-    """Input for LinkedIn API"""
-    linkedin_url: str = Field(..., description="LinkedIn profil URL")
+    """Input for LinkedIn API."""
+    linkedin_url: str = Field(..., description="LinkedIn URL til profilen")
 
 class HunterInput(BaseModel):
-    """Input for Hunter API"""
-    domain: str = Field(..., description="Domenet å søke i")
-    api_key: str = Field(..., description="Hunter.io API nøkkel")
-    offset: int = Field(default=0, description="Offset for paginering")
-    limit: int = Field(default=50, description="Antall resultater per side")
+    """Input for Hunter API."""
+    domain: str = Field(..., description="Domenet som skal søkes etter")
+    api_key: str = Field(..., description="API-nøkkel for Hunter.io")
+    offset: int = Field(0, description="Offset for paginering")
+    limit: int = Field(50, description="Antall resultater per side")
 
 class HunterResponse(BaseModel):
-    """Strukturert respons fra Hunter API"""
-    emails: List[dict] = Field(..., description="Liste over e-poster")
-    meta: dict = Field(..., description="Metadata inkludert antall sider")
+    """Respons fra Hunter API."""
+    emails: List[Dict[str, Any]] = Field(..., description="Liste over e-poster")
+    meta: Dict[str, Any] = Field(..., description="Metadata om søket")
 
 #######################
 # Interne modeller (for analyse)
 #######################
-
-class SearchConfig(TypedDict):
-    """Konfigurasjon for søk"""
-    domain: str
-    target_role: str
-    max_results: int
 
 def merge_users(current: List[Dict], update: List[Dict]) -> List[Dict]:
     """Merger brukere basert på email eller linkedin_url som nøkkel."""
@@ -113,9 +113,11 @@ def merge_users(current: List[Dict], update: List[Dict]) -> List[Dict]:
     return unique_users
 
 class State(TypedDict):
-    messages: Annotated[List[BaseMessage], add]
-    users: Annotated[List[Dict], merge_users]
-    config: Dict
+    """State for workflowen."""
+    messages: List[BaseMessage]
+    users: List[Dict]
+    config: Optional[SearchConfig]
+    crm_results: Optional[List[Dict[str, Any]]]
 
 
 #######################
