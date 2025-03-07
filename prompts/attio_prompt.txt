@@ -9,7 +9,7 @@ Din oppgave er å:
 
 # Brukerdata
 Her er brukerdataene du skal konvertere:
-{user_data}
+{input}
 
 # Attio Person Format
 Bruk get_attio_person_schema() for å få riktig format for personer i Attio.

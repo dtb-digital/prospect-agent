@@ -385,7 +385,7 @@ def create_attio_agent(prompt_template=None):
             
             # Brukerdata
             Her er brukerdataene du skal konvertere:
-            {user_data}
+            {input}
             
             # Attio Person Format
             Bruk get_attio_person_schema() for å få riktig format for personer i Attio.
@@ -501,7 +501,7 @@ def create_crm_contacts(state: dict, config: dict) -> dict:
             user_data = json.dumps(user, indent=2)
             
             # Kjør agenten
-            response = agent.invoke({"user_data": user_data})
+            response = agent.invoke({"input": user_data})
             
             crm_results.append({
                 "user": user.get("email", user.get("name", "Ukjent bruker")),
