@@ -29,9 +29,15 @@ print("\nAttio Note Schema:")
 print(get_attio_note_schema())
 
 # Kjør agenten med brukerdataene
-result = agent.invoke({
-    "user_data": json.dumps(user_data, indent=2)
-})
+print("Kjører agenten med brukerdata...")
+print(f"Bruker {len(user_data)} felt i brukerdataene")
+
+# Konverter brukerdata til en streng for agenten
+result = agent.invoke({"user_data": json.dumps(user_data, ensure_ascii=False)})
+
+# Skriv ut hele resultatet for debugging
+print("\nFullstendig resultat fra agenten:")
+print(json.dumps(result, indent=2, default=str))
 
 print("CRM-integrasjon resultat:")
 # Håndter AIMessage-objekter

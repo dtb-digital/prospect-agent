@@ -157,7 +157,7 @@ def assert_person_in_attio(person_data: str) -> str:
     if not api_key:
         return "ATTIO_API_KEY må være satt i .env-filen"
     
-    # Først må vi sjekke om personen finnes basert på e-post
+    # Bruk enkel POST for å opprette personer
     try:
         # Parse input data
         if isinstance(person_data, str):
@@ -165,63 +165,29 @@ def assert_person_in_attio(person_data: str) -> str:
         else:
             data = person_data
             
-        # Hent e-postadressen fra dataene
-        email = None
-        if "data" in data and "values" in data["data"] and "email_addresses" in data["data"]["values"]:
-            email_addresses = data["data"]["values"]["email_addresses"]
-            if email_addresses and len(email_addresses) > 0 and "value" in email_addresses[0]:
-                email = email_addresses[0]["value"]
-        
-        if not email:
-            return "Kunne ikke finne e-postadresse i dataene"
-            
-        # Søk etter personen basert på e-post
-        search_url = f"https://api.attio.com/v2/objects/people/records/search"
-        search_params = {
-            "query": email
-        }
-        
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
             "Accept": "application/json"
         }
         
-        print(f"Søker etter person med e-post: {email}")
-        search_response = requests.get(search_url, headers=headers, params=search_params)
-        search_response.raise_for_status()
-        search_result = search_response.json()
-        
-        print(f"Søkeresultat: {json.dumps(search_result, indent=2)}")
-        
-        # Sjekk om personen finnes
-        person_id = None
-        if "data" in search_result and "records" in search_result["data"] and len(search_result["data"]["records"]) > 0:
-            person_id = search_result["data"]["records"][0]["id"]
-            print(f"Fant eksisterende person med ID: {person_id}")
-            
-        # Hvis personen finnes, oppdater med PUT
-        if person_id:
-            update_url = f"https://api.attio.com/v2/objects/people/records/{person_id}"
-            print(f"Oppdaterer eksisterende person med PUT: {update_url}")
-            response = requests.put(update_url, headers=headers, json=data)
-        else:
-            # Hvis personen ikke finnes, opprett med POST
-            create_url = "https://api.attio.com/v2/objects/people/records"
-            print(f"Oppretter ny person med POST: {create_url}")
-            response = requests.post(create_url, headers=headers, json=data)
+        # Bruk standard create-endepunkt
+        create_url = "https://api.attio.com/v2/objects/people/records"
+        print(f"Oppretter person med POST: {create_url}")
+        print(f"Sender data til Attio: {json.dumps(data, indent=2)}")
+        response = requests.post(create_url, headers=headers, json=data)
         
         print(f"Attio API respons status: {response.status_code}")
         print(f"Attio API respons: {response.text[:200]}...")
         
         if response.status_code >= 400:
-            return f"Feil ved oppretting/oppdatering av person i Attio: {response.text}"
+            return f"Feil ved oppretting av person i Attio: {response.text}"
         
         return json.dumps(response.json(), indent=2)
         
     except Exception as e:
         print(f"Feil i assert_person_in_attio: {str(e)}")
-        return f"Feil ved oppretting/oppdatering av person i Attio: {str(e)}"
+        return f"Feil ved oppretting av person i Attio: {str(e)}"
 
 @traceable(name="create_note_in_attio", project=os.getenv("LANGCHAIN_PROJECT", "prospect-agent"))
 def create_note_in_attio(note_data: str) -> str:
@@ -280,12 +246,11 @@ def get_attio_person_schema() -> str:
     {
       "data": {
         "values": {
-          "email_addresses": [{"value": "email@example.com"}],
-          "name": [{"value": "Fullt navn"}],
-          "job_title": [{"value": "Stillingstittel"}],
-          "company": [{"value": "Selskap"}],
-          "linkedin": [{"value": "LinkedIn URL"}],
-          "phone_numbers": [{"value": "Telefonnummer"}]
+          "email_addresses": ["email@example.com"],
+          "name": "Fullt navn",
+          "job_title": "Stillingstittel",
+          "linkedin": "LinkedIn URL",
+          "phone_numbers": ["Telefonnummer"]
         }
       }
     }
@@ -302,7 +267,7 @@ def get_attio_note_schema() -> str:
     {
       "data": {
         "parent_object": "people",
-        "parent_record_id": "person_id_her",
+        "parent_record_id": "record_id_streng_her",
         "title": "Notat-tittel",
         "format": "plaintext",
         "content": "Notat-innhold med \\n for linjeskift"

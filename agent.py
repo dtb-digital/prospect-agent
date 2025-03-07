@@ -21,6 +21,8 @@ from models import (
 from langchain_core.prompts import ChatPromptTemplate
 from system_prompts import get_analysis_prompt, get_priority_prompt
 from prompt_hub import get_prompt_from_hub
+from langchain.agents import create_structured_chat_agent, AgentExecutor
+from langchain.tools import Tool
 
 load_dotenv()
 
@@ -361,30 +363,101 @@ Attio Note-formatet ser slik ut:
 Bruk verktøyene for å utføre oppgaven.
 """
 
-def create_attio_agent():
-    """Oppretter en agent for å håndtere Attio CRM-integrasjon."""
+def create_attio_agent(prompt_template=None):
+    """Oppretter en agent for å opprette kontakter i Attio CRM."""
+    
+    # Last inn prompt fra LangSmith eller bruk standard
+    if not prompt_template:
+        try:
+            prompt_template = get_prompt_from_hub("prospect-agent-attio-prompt")
+        except Exception as e:
+            print(f"Kunne ikke hente prompt fra LangSmith: {str(e)}")
+            # Bruk standard prompt
+            prompt_template = """
+            Du er en spesialist på å opprette kontakter i Attio CRM basert på analyserte brukerdata.
+            
+            # Oppgave
+            Din oppgave er å:
+            1. Konvertere brukerdata til Attio-format for person
+            2. Opprette personen i Attio med assert_person_in_attio
+            3. Lage et detaljert notat med all tilleggsinformasjon om personen
+            4. Knytte notatet til personen i Attio med create_note_in_attio
+            
+            # Brukerdata
+            Her er brukerdataene du skal konvertere:
+            {user_data}
+            
+            # Attio Person Format
+            Bruk get_attio_person_schema() for å få riktig format for personer i Attio.
+            
+            # Attio Note Format
+            Bruk get_attio_note_schema() for å få riktig format for notater i Attio.
+            
+            # Instruksjoner for notatet
+            - Lag en informativ tittel som oppsummerer personens rolle og selskap
+            - Inkluder all relevant informasjon fra brukerdata i notatinnholdet
+            - Organiser notatet i seksjoner: Sammendrag, Karriere, Kompetanse, Utdanning, etc.
+            - Bruk linjeskift (\\n) for å formatere notatet
+            
+            # Fremgangsmåte
+            1. Hent skjemaene for person og notat
+            2. Konverter brukerdataene til Attio Person-format
+            3. Opprett personen i Attio med assert_person_in_attio
+            4. Hent person_id fra responsen
+            5. Lag et detaljert notat i Attio Note-format
+            6. Opprett notatet i Attio med create_note_in_attio
+            
+            Bruk verktøyene for å utføre oppgaven og rapporter resultatet.
+            """
+    
+    print(f"Attio agent prompt: \n{prompt_template}")
+    
+    # Opprett prompt template
+    prompt = ChatPromptTemplate.from_template(prompt_template)
+    
+    # Opprett LLM
     llm = ChatOpenAI(model="gpt-4o-mini")
     
+    # Definer verktøy for Attio CRM
     tools = [
-        assert_person_in_attio,
-        create_note_in_attio,
-        get_attio_person_schema,
-        get_attio_note_schema
+        Tool(
+            name="assert_person_in_attio",
+            func=assert_person_in_attio,
+            description="Oppretter eller oppdaterer en person i Attio CRM basert på persondata i Attio-format"
+        ),
+        Tool(
+            name="create_note_in_attio",
+            func=create_note_in_attio,
+            description="Oppretter et notat i Attio CRM knyttet til en person"
+        ),
+        Tool(
+            name="get_attio_person_schema",
+            func=get_attio_person_schema,
+            description="Henter skjema for personer i Attio CRM"
+        ),
+        Tool(
+            name="get_attio_note_schema",
+            func=get_attio_note_schema,
+            description="Henter skjema for notater i Attio CRM"
+        )
     ]
     
-    prompt = ChatPromptTemplate.from_messages([
-        SystemMessage(content=ATTIO_AGENT_PROMPT)
-    ])
+    # Skriv ut verktøyene for debugging
+    print("Registrerte verktøy:")
+    for tool in tools:
+        print(f"- {tool.name}: {tool.description}")
     
-    # Debug: Skriv ut prompt
-    print(f"Attio agent prompt: {ATTIO_AGENT_PROMPT[:100]}...")
-    
-    agent = (
-        prompt
-        | llm.bind_tools(tools)
+    # Opprett agent med mer verbose logging
+    agent = create_structured_chat_agent(llm, tools, prompt)
+    agent_executor = AgentExecutor(
+        agent=agent, 
+        tools=tools, 
+        verbose=True,
+        handle_parsing_errors=True,  # Håndter parsing-feil
+        max_iterations=10  # Begrens antall iterasjoner
     )
     
-    return agent
+    return agent_executor
 
 @traceable(run_type="chain", name="create_crm_contacts")
 def create_crm_contacts(state: dict, config: dict) -> dict:

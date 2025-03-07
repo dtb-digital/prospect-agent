@@ -10,11 +10,10 @@ from tools import assert_person_in_attio, create_note_in_attio
 person_data = {
   "data": {
     "values": {
-      "email_addresses": [{"value": "karina@firi.com"}],
-      "name": [{"value": "Karina Brix"}],
-      "job_title": [{"value": "Country Manager"}],
-      "company": [{"value": "Firi"}],
-      "linkedin": [{"value": "https://www.linkedin.com/in/karinarothoffbrix"}],
+      "email_addresses": ["karina@firi.com"],
+      "name": "Karina Brix",
+      "job_title": "Country Manager",
+      "linkedin": "https://www.linkedin.com/in/karinarothoffbrix",
       "phone_numbers": []
     }
   }
@@ -35,7 +34,7 @@ try:
         note_data = {
           "data": {
             "parent_object": "people",
-            "parent_record_id": person_id,
+            "parent_record_id": person_id["record_id"],
             "title": "Karina Brix - Country Manager at Firi",
             "format": "plaintext",
             "content": "Sammendrag:\nKarina er Country Manager for Firi i Danmark.\n\nKontaktinfo:\nEmail: karina@firi.com\nLinkedIn: https://www.linkedin.com/in/karinarothoffbrix"
