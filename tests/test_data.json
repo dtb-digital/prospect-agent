@@ -1,0 +1,47 @@
+{
+  "users": [
+    {
+      "email": "trang@firi.com",
+      "first_name": "Trang",
+      "last_name": "Hoang",
+      "role": "Chief Financial Officer",
+      "linkedin_url": "https://www.linkedin.com/in/trang-hoang-12810645",
+      "confidence": "94",
+      "sources": [
+        "hunter"
+      ]
+    },
+    {
+      "email": "karina@firi.com",
+      "first_name": "Karina",
+      "last_name": "Brix",
+      "role": "Country Manager",
+      "linkedin_url": "https://www.linkedin.com/in/karinarothoffbrix",
+      "confidence": "94",
+      "sources": [
+        "linkedin",
+        "hunter",
+        "analyzed",
+        "prioritized"
+      ],
+      "priority_score": 0.8,
+      "priority_reason": "Karina er Country Manager, som kan inneb\u00e6re ledelse og strategisk ansvar, men er ikke direkte en CEO- eller produktlederrolle. Hun har h\u00f8y confidence score og en LinkedIn-profil.",
+      "linkedin_raw_data": {
+        "about": "As the country manager Denmark at Firi, the largest cryptocurrency exchange in the Nordic region, I lead the strategy and operations of the Danish market, while fostering a culture of entrepreneurship, innovation, and lifelong learning within the organization."
+      },
+      "location": {
+        "city": "Copenhagen",
+        "country": "Danmark",
+        "region": "Capital Region of Denmark"
+      },
+      "headline": "Country Manager & Board Member Firi",
+      "profile_image_url": "https://media.licdn.com/dms/image/v2/D4D03AQFpgbeqwCOjGg/profile-displayphoto-shrink_800_800/profile-displayphoto-shrink_800_800/0/1728641906660?e=1746662400&v=beta&t=V1NcR03jxD1vv4nFmiIAYd5pChe_PUukCaEY7YVtn7I",
+      "about": "Karina Rothoff Brix er en erfaren leder med over 10 \u00e5rs erfaring innen ulike bransjer, inkludert finansielle tjenester, utdanning og b\u00e6rekraft."
+    }
+  ],
+  "config": {
+    "domain": "firi.com",
+    "target_role": "ceo eller produktleder",
+    "max_results": 5
+  }
+}

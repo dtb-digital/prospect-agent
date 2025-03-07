@@ -365,17 +365,22 @@ def create_attio_agent():
     """Oppretter en agent for å håndtere Attio CRM-integrasjon."""
     llm = ChatOpenAI(model="gpt-4o-mini")
     
-    prompt = ChatPromptTemplate.from_template(ATTIO_AGENT_PROMPT)
-    
     tools = [
-        assert_person_in_attio, 
-        create_note_in_attio, 
-        get_attio_person_schema, 
+        assert_person_in_attio,
+        create_note_in_attio,
+        get_attio_person_schema,
         get_attio_note_schema
     ]
     
+    prompt = ChatPromptTemplate.from_messages([
+        SystemMessage(content=ATTIO_AGENT_PROMPT)
+    ])
+    
+    # Debug: Skriv ut prompt
+    print(f"Attio agent prompt: {ATTIO_AGENT_PROMPT[:100]}...")
+    
     agent = (
-        prompt 
+        prompt
         | llm.bind_tools(tools)
     )
     
