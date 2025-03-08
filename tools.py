@@ -261,6 +261,17 @@ def create_note_in_attio(note_data: str) -> str:
         else:
             data = note_data
         
+        # Sikre at vi har riktig format
+        if "data" not in data:
+            data = {"data": data}
+        
+        # Sikre at vi har alle nødvendige felt
+        if "parent_object" not in data["data"]:
+            data["data"]["parent_object"] = "people"
+        
+        if "format" not in data["data"]:
+            data["data"]["format"] = "plaintext"
+        
         print(f"Sender data til Attio: {json.dumps(data, indent=2)}")
         response = requests.post(url, headers=headers, json=data)
         

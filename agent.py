@@ -371,26 +371,15 @@ def create_attio_agent(prompt_template=None):
     return agent_executor
 
 @traceable(run_type="chain", name="create_crm_contacts")
-def create_crm_contacts(state: dict, config: dict) -> dict:
-    """Oppretter kontakter i CRM-systemet ved hjelp av en agent."""
-    messages = state.get("messages", [])
+def create_crm_contacts(state: dict, config: RunnableConfig) -> dict:
+    """Oppretter kontakter i CRM-systemet basert på analyserte brukere."""
+    messages = []
     crm_results = []
-    
-    # Sjekk om CRM-integrasjon er aktivert
-    if os.getenv("ENABLE_CRM_INTEGRATION", "false").lower() != "true":
-        messages.append(
-            AIMessage(content="CRM-integrasjon er deaktivert. Sett ENABLE_CRM_INTEGRATION=true for å aktivere.")
-        )
-        return {
-            "messages": messages,
-            "users": state["users"],
-            "crm_results": []
-        }
     
     # Filtrer ut kun analyserte brukere
     analyzed_users = [
         user for user in state["users"] 
-        if user.get("sources") and "analyzed" in user.get("sources", [])
+        if user.get("sources") and all(source in user.get("sources", []) for source in ["analyzed", "linkedin"])
     ]
     
     if not analyzed_users:

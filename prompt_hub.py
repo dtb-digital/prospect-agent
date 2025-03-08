@@ -10,75 +10,41 @@ load_dotenv()
 client = Client()
 
 # Hent prompter fra Prompt Hub
-def get_prompt_from_hub(prompt_name, fallback_content=None):
-    """
-    Henter en prompt fra LangSmith Prompt Hub.
+def get_prompt_from_hub(prompt_name: str, default_content: str = None) -> str:
+    """Henter en prompt fra LangSmith prompt hub."""
+    print(f"Henter {prompt_name}...")
     
-    Args:
-        prompt_name: Navnet på prompten i LangSmith
-        fallback_content: Innhold som skal brukes hvis prompten ikke finnes
-        
-    Returns:
-        Innholdet i prompten
-    """
     try:
-        # Prøv å hente prompten direkte med pull_prompt
-        try:
-            prompt = client.pull_prompt(prompt_name)
-            print(f"Hentet prompt '{prompt_name}' fra LangSmith")
+        client = Client()
+        prompt = client.pull_prompt(prompt_name)
+        print(f"Hentet prompt '{prompt_name}' fra LangSmith")
+        
+        # Håndter SystemMessagePromptTemplate
+        if isinstance(prompt, SystemMessagePromptTemplate):
+            return prompt.prompt.template
+        # Håndter ChatPromptTemplate
+        elif hasattr(prompt, 'messages') and len(prompt.messages) > 0:
+            if hasattr(prompt.messages[0], 'prompt'):
+                return prompt.messages[0].prompt.template
+            elif hasattr(prompt.messages[0], 'content'):
+                return prompt.messages[0].content
+        # Håndter direkte content-attributt
+        elif hasattr(prompt, 'content'):
+            return prompt.content
+        # Håndter template-attributt
+        elif hasattr(prompt, 'template'):
+            return prompt.template
+        else:
+            # Prøv å inspisere objektet for å finne innholdet
+            print(f"Prompt type: {type(prompt)}")
+            print(f"Prompt attributes: {dir(prompt)}")
+            if hasattr(prompt, '__dict__'):
+                print(f"Prompt dict: {prompt.__dict__}")
             
-            # Hent innholdet fra prompten
-            if isinstance(prompt, ChatPromptTemplate) and hasattr(prompt, 'messages'):
-                # ChatPromptTemplate har en liste med meldinger
-                for message in prompt.messages:
-                    if isinstance(message, SystemMessagePromptTemplate) and hasattr(message, 'prompt'):
-                        # SystemMessagePromptTemplate har en prompt av typen PromptTemplate
-                        if hasattr(message.prompt, 'template'):
-                            return message.prompt.template
-                
-                # Hvis ingen systemmelding, returner template fra første melding
-                if prompt.messages and hasattr(prompt.messages[0], 'prompt'):
-                    if hasattr(prompt.messages[0].prompt, 'template'):
-                        return prompt.messages[0].prompt.template
-            
-            # For StringPromptTemplate
-            if hasattr(prompt, 'template'):
-                return prompt.template
-                
-            return str(prompt)
-            
-        except Exception as e:
-            print(f"Kunne ikke hente prompt med pull_prompt: {e}")
-            
-            # Prøv å finne prompten i listen over prompter
-            prompts_response = client.list_prompts()
-            prompts = prompts_response.repos if hasattr(prompts_response, 'repos') else []
-            
-            for prompt in prompts:
-                if prompt.repo_handle == prompt_name:
-                    print(f"Fant prompt '{prompt_name}' i listen, men kunne ikke hente innholdet")
-                    print(f"Du kan se prompten i LangSmith UI: https://smith.langchain.com/hub/{prompt.repo_handle}")
-                    
-                    return fallback_content
-            
-            # Hvis vi kommer hit, fant vi ikke prompten
-            print(f"Prompt '{prompt_name}' ikke funnet i LangSmith")
-            
-            # Opprett ny prompt hvis vi har fallback-innhold
-            if fallback_content:
-                print(f"Oppretter ny prompt '{prompt_name}' i LangSmith")
-                # Konverter tekst til ChatPromptTemplate
-                prompt_template = ChatPromptTemplate.from_messages([
-                    ("system", fallback_content)
-                ])
-                # Bruk push_prompt med object-parameter
-                client.push_prompt(prompt_name, object=prompt_template)
-                return fallback_content
-                
-            return fallback_content
+            raise ValueError(f"Kunne ikke finne innhold i prompt '{prompt_name}', ukjent format")
     except Exception as e:
-        print(f"Feil ved henting av prompt '{prompt_name}': {e}")
-        return fallback_content
+        print(f"Kunne ikke hente prompt '{prompt_name}' fra LangSmith: {str(e)}")
+        raise ValueError(f"Kunne ikke hente prompt '{prompt_name}' fra LangSmith: {str(e)}")
 
 # Oppdater en eksisterende prompt
 def update_prompt_in_hub(prompt_name, content):

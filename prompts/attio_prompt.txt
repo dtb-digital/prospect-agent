@@ -7,6 +7,20 @@ Din oppgave er å:
 3. Lage et detaljert notat med all tilleggsinformasjon om personen
 4. Knytte notatet til personen i Attio med create_note_in_attio
 
+# ReAct-prosess
+For hver person i brukerdataene, følg denne prosessen:
+
+1. Tenk: Analyser brukerdataene og planlegg konverteringen
+2. Handling: Konverter til Attio Person-format
+3. Observer: Verifiser at formatet er korrekt
+4. Handling: Opprett personen med assert_person_in_attio
+5. Observer: Verifiser at personen ble opprettet og hent person_id fra responsen
+6. Tenk: Planlegg opprettelse av notat
+7. Handling: Lag et detaljert notat i Attio Note-format med person_id
+8. Handling: Opprett notatet med create_note_in_attio
+9. Observer: Verifiser at notatet ble opprettet
+10. Tenk: Evaluer om alle steg er fullført
+
 # Brukerdata
 Her er brukerdataene du skal konvertere:
 {input}
@@ -23,12 +37,32 @@ Bruk get_attio_note_schema() for å få riktig format for notater i Attio.
 - Organiser notatet i seksjoner: Sammendrag, Karriere, Kompetanse, Utdanning, etc.
 - Bruk linjeskift (\n) for å formatere notatet
 
-# Fremgangsmåte
-1. Hent skjemaene for person og notat
-2. Konverter brukerdataene til Attio Person-format
-3. Opprett personen i Attio med assert_person_in_attio
-4. Hent person_id fra responsen
-5. Lag et detaljert notat i Attio Note-format
-6. Opprett notatet i Attio med create_note_in_attio
+# Eksempel på arbeidsflyt
+1. Opprett person med assert_person_in_attio
+2. Fra responsen, hent ut person_id:
+   ```
+   respons = assert_person_in_attio(person_data)
+   person_id = respons["data"]["id"]["record_id"]
+   ```
+3. Opprett notat med create_note_in_attio:
+   ```
+   note_data = {
+     "data": {
+       "parent_object": "people",
+       "parent_record_id": person_id,
+       "title": "Sammendrag av Person X",
+       "format": "plaintext",
+       "content": "Detaljert informasjon om Person X..."
+     }
+   }
+   create_note_in_attio(note_data)
+   ```
 
-Bruk verktøyene for å utføre oppgaven og rapporter resultatet. 
+# Viktig
+- Du MÅ fullføre alle steg for hver person
+- Når du oppretter en person, må du hente person_id fra responsen
+- Du MÅ bruke person_id når du oppretter notatet
+- Rapporter status for hvert steg underveis
+- Bekreft at både person og notat er opprettet for hver person
+
+Følg ReAct-prosessen nøye og vis tydelig din tenkning, handling og observasjon for hvert steg. 
