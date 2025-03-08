@@ -142,52 +142,93 @@ def create_person_in_attio(person_data: str) -> str:
         return f"Feil ved oppretting av person i Attio: {str(e)}"
 
 @traceable(name="assert_person_in_attio", project=os.getenv("LANGCHAIN_PROJECT", "prospect-agent"))
-def assert_person_in_attio(person_data: str) -> str:
-    """
-    Oppretter eller oppdaterer en person i Attio CRM.
+def assert_person_in_attio(person_data):
+    """Oppretter eller oppdaterer en person i Attio CRM basert på persondata i Attio-format"""
+    print(f"assert_person_in_attio kalt med: {json.dumps(person_data)[:100]}...")
     
-    Args:
-        person_data: JSON-streng med persondata i Attio-format
-        
-    Returns streng med respons fra Attio API
-    """
-    print(f"assert_person_in_attio kalt med: {person_data[:100]}...")
+    # Sjekk om vi har nødvendige miljøvariabler
     api_key = os.getenv("ATTIO_API_KEY")
-    
     if not api_key:
-        return "ATTIO_API_KEY må være satt i .env-filen"
+        return "Feil: ATTIO_API_KEY miljøvariabel mangler"
     
-    # Bruk enkel POST for å opprette personer
-    try:
-        # Parse input data
-        if isinstance(person_data, str):
-            data = json.loads(person_data)
-        else:
-            data = person_data
-            
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "Accept": "application/json"
+    # Opprett person i Attio
+    url = "https://api.attio.com/v2/objects/people/records"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}"
+    }
+    
+    # Sikre at vi har riktig format for Attio API
+    # Konverter til riktig format uansett hva som kommer inn
+    if isinstance(person_data, str):
+        try:
+            person_data = json.loads(person_data)
+        except:
+            return "Feil: Kunne ikke parse person_data som JSON"
+    
+    # Opprett ny data-struktur i riktig format
+    formatted_data = {
+        "data": {
+            "values": {}
         }
-        
-        # Bruk standard create-endepunkt
-        create_url = "https://api.attio.com/v2/objects/people/records"
-        print(f"Oppretter person med POST: {create_url}")
-        print(f"Sender data til Attio: {json.dumps(data, indent=2)}")
-        response = requests.post(create_url, headers=headers, json=data)
-        
+    }
+    
+    # Hent ut feltene vi trenger
+    email = None
+    first_name = None
+    last_name = None
+    role = None
+    linkedin_url = None
+    
+    # Sjekk om vi har data-felt
+    if "data" in person_data:
+        data = person_data["data"]
+        email = data.get("email")
+        first_name = data.get("first_name")
+        last_name = data.get("last_name")
+        role = data.get("role")
+        linkedin_url = data.get("linkedin_url")
+    else:
+        # Antar at feltene er på toppnivå
+        email = person_data.get("email")
+        first_name = person_data.get("first_name")
+        last_name = person_data.get("last_name")
+        role = person_data.get("role")
+        linkedin_url = person_data.get("linkedin_url")
+    
+    # Fyll inn verdiene
+    values = formatted_data["data"]["values"]
+    
+    if email:
+        values["email_addresses"] = [email]
+    
+    if first_name and last_name:
+        values["name"] = f"{first_name} {last_name}"
+    
+    if role:
+        values["job_title"] = role
+    
+    if linkedin_url:
+        values["linkedin"] = linkedin_url
+    
+    # Bruk den nye formatterte datastrukturen
+    person_data = formatted_data
+    
+    print(f"Oppretter person med POST: {url}")
+    print(f"Sender data til Attio: {json.dumps(person_data, indent=2)}")
+    
+    try:
+        response = requests.post(url, headers=headers, json=person_data)
         print(f"Attio API respons status: {response.status_code}")
         print(f"Attio API respons: {response.text[:200]}...")
         
-        if response.status_code >= 400:
-            return f"Feil ved oppretting av person i Attio: {response.text}"
-        
-        return json.dumps(response.json(), indent=2)
-        
+        if response.status_code == 200 or response.status_code == 201:
+            # Returner person_id fra responsen
+            return response.json()
+        else:
+            return f"Feil ved oppretting av person: {response.text}"
     except Exception as e:
-        print(f"Feil i assert_person_in_attio: {str(e)}")
-        return f"Feil ved oppretting av person i Attio: {str(e)}"
+        return f"Feil ved oppretting av person: {str(e)}"
 
 @traceable(name="create_note_in_attio", project=os.getenv("LANGCHAIN_PROJECT", "prospect-agent"))
 def create_note_in_attio(note_data: str) -> str:

@@ -9,31 +9,30 @@ from langchain_core.messages import AIMessage
 from tools import get_attio_person_schema, get_attio_note_schema
 
 # Last inn testdata
-with open(os.path.join(os.path.dirname(__file__), "test_data.json"), "r") as f:
-    test_data = json.load(f)
+with open("tests/test_data.json", "r") as f:
+    user_data = json.load(f)
 
-# Velg en person fra dataene (Karina Brix)
-user_data = test_data["users"][1]  # Karina er den andre personen i listen
+# Skriv ut brukerdata
+print(f"Brukerdata som sendes til agenten:")
+print(json.dumps(user_data, indent=2, ensure_ascii=False))
 
-# Opprett Attio-agenten
+# Skriv ut antall felt
+print(f"Bruker {len(user_data.keys())} felt i brukerdataene\n")
+
+# Hent Attio-skjemaer for debugging
+print("\nAttio Person Schema:\n")
+print(get_attio_person_schema())
+print("\nAttio Note Schema:\n")
+print(get_attio_note_schema())
+print("\nKjører agenten med brukerdata...")
+
+# Opprett agent
 agent = create_attio_agent()
 
-# Debug: Skriv ut brukerdata
-print("Brukerdata som sendes til agenten:")
-print(json.dumps(user_data, indent=2))
+# Kjør agenten
+result = agent({"input": json.dumps(user_data, ensure_ascii=False)})
 
-# Debug: Hent skjemaer
-print("\nAttio Person Schema:")
-print(get_attio_person_schema())
-print("\nAttio Note Schema:")
-print(get_attio_note_schema())
-
-# Kjør agenten med brukerdataene
-print("Kjører agenten med brukerdata...")
-print(f"Bruker {len(user_data)} felt i brukerdataene")
-
-# Konverter brukerdata til en streng for agenten
-result = agent.invoke({"user_data": json.dumps(user_data, ensure_ascii=False)})
+print(f"Resultat: {result}")
 
 # Skriv ut hele resultatet for debugging
 print("\nFullstendig resultat fra agenten:")

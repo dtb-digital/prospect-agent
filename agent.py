@@ -3,6 +3,7 @@ from langchain_core.messages import BaseMessage, HumanMessage, ToolMessage, AIMe
 from langchain_openai import ChatOpenAI
 from langgraph.graph import START, END, StateGraph
 from langchain_core.runnables import RunnableConfig
+from langgraph.prebuilt import create_react_agent
 from langsmith import traceable
 from langsmith.wrappers import wrap_openai
 from openai import OpenAI
@@ -18,10 +19,9 @@ from models import (
     User,
     State,
 )
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from system_prompts import get_analysis_prompt, get_priority_prompt
 from prompt_hub import get_prompt_from_hub
-from langchain.agents import create_structured_chat_agent, AgentExecutor
 from langchain.tools import Tool
 
 load_dotenv()
@@ -301,68 +301,6 @@ def analyze_profiles(state: dict, config: RunnableConfig) -> dict:
         "users": analyzed,
     }
 
-# Definer prompt for Attio-agenten
-ATTIO_AGENT_PROMPT = """
-Du er en spesialist på å opprette kontakter i Attio CRM basert på analyserte brukerdata.
-
-# Oppgave
-Din oppgave er å:
-1. Konvertere brukerdata til Attio-format for person
-2. Opprette personen i Attio med assert_person_in_attio
-3. Lage et detaljert notat med all tilleggsinformasjon om personen
-4. Knytte notatet til personen i Attio med create_note_in_attio
-
-# Brukerdata
-Her er brukerdataene du skal konvertere:
-{user_data}
-
-# Attio Person Format
-Attio Person-formatet ser slik ut:
-```json
-{
-  "data": {
-    "values": {
-      "email_addresses": [{"value": "email@example.com"}],
-      "name": [{"value": "Fullt navn"}],
-      "job_title": [{"value": "Stillingstittel"}],
-      "company": [{"value": "Selskap"}],
-      "linkedin": [{"value": "LinkedIn URL"}],
-      "phone_numbers": [{"value": "Telefonnummer"}]
-    }
-  }
-}
-```
-
-# Attio Note Format
-Attio Note-formatet ser slik ut:
-```json
-{
-  "data": {
-    "parent_object": "people",
-    "parent_record_id": "person_id_her",
-    "title": "Notat-tittel",
-    "format": "plaintext",
-    "content": "Notat-innhold med \\n for linjeskift"
-  }
-}
-```
-
-# Instruksjoner for notatet
-- Lag en informativ tittel som oppsummerer personens rolle og selskap
-- Inkluder all relevant informasjon fra brukerdata i notatinnholdet
-- Organiser notatet i seksjoner: Sammendrag, Karriere, Kompetanse, Utdanning, etc.
-- Bruk linjeskift (\\n) for å formatere notatet
-
-# Fremgangsmåte
-1. Konverter brukerdataene til Attio Person-format
-2. Opprett personen i Attio med assert_person_in_attio
-3. Hent person_id fra responsen
-4. Lag et detaljert notat i Attio Note-format
-5. Opprett notatet i Attio med create_note_in_attio
-
-Bruk verktøyene for å utføre oppgaven.
-"""
-
 def create_attio_agent(prompt_template=None):
     """Oppretter en agent for å opprette kontakter i Attio CRM."""
     
@@ -371,49 +309,11 @@ def create_attio_agent(prompt_template=None):
         try:
             prompt_template = get_prompt_from_hub("prospect-agent-attio-prompt")
         except Exception as e:
-            print(f"Kunne ikke hente prompt fra LangSmith: {str(e)}")
-            # Bruk standard prompt
-            prompt_template = """
-            Du er en spesialist på å opprette kontakter i Attio CRM basert på analyserte brukerdata.
-            
-            # Oppgave
-            Din oppgave er å:
-            1. Konvertere brukerdata til Attio-format for person
-            2. Opprette personen i Attio med assert_person_in_attio
-            3. Lage et detaljert notat med all tilleggsinformasjon om personen
-            4. Knytte notatet til personen i Attio med create_note_in_attio
-            
-            # Brukerdata
-            Her er brukerdataene du skal konvertere:
-            {input}
-            
-            # Attio Person Format
-            Bruk get_attio_person_schema() for å få riktig format for personer i Attio.
-            
-            # Attio Note Format
-            Bruk get_attio_note_schema() for å få riktig format for notater i Attio.
-            
-            # Instruksjoner for notatet
-            - Lag en informativ tittel som oppsummerer personens rolle og selskap
-            - Inkluder all relevant informasjon fra brukerdata i notatinnholdet
-            - Organiser notatet i seksjoner: Sammendrag, Karriere, Kompetanse, Utdanning, etc.
-            - Bruk linjeskift (\\n) for å formatere notatet
-            
-            # Fremgangsmåte
-            1. Hent skjemaene for person og notat
-            2. Konverter brukerdataene til Attio Person-format
-            3. Opprett personen i Attio med assert_person_in_attio
-            4. Hent person_id fra responsen
-            5. Lag et detaljert notat i Attio Note-format
-            6. Opprett notatet i Attio med create_note_in_attio
-            
-            Bruk verktøyene for å utføre oppgaven og rapporter resultatet.
-            """
+            error_msg = f"Kunne ikke hente prompt 'prospect-agent-attio-prompt' fra LangSmith: {str(e)}"
+            print(error_msg)
+            raise ValueError(error_msg)
     
     print(f"Attio agent prompt: \n{prompt_template}")
-    
-    # Opprett prompt template
-    prompt = ChatPromptTemplate.from_template(prompt_template)
     
     # Opprett LLM
     llm = ChatOpenAI(model="gpt-4o-mini")
@@ -447,15 +347,26 @@ def create_attio_agent(prompt_template=None):
     for tool in tools:
         print(f"- {tool.name}: {tool.description}")
     
-    # Opprett agent med mer verbose logging
-    agent = create_structured_chat_agent(llm, tools, prompt)
-    agent_executor = AgentExecutor(
-        agent=agent, 
-        tools=tools, 
-        verbose=True,
-        handle_parsing_errors=True,  # Håndter parsing-feil
-        max_iterations=10  # Begrens antall iterasjoner
-    )
+    # Opprett agent med LangGraph's create_react_agent
+    graph = create_react_agent(llm, tools)
+    
+    # Lag en wrapper-funksjon som konverterer mellom formatene
+    def agent_executor(input_data):
+        # Formater input for LangGraph-agent
+        formatted_input = {
+            "messages": [("user", input_data["input"])]
+        }
+        
+        # Kjør agenten
+        result = graph.invoke(formatted_input)
+        
+        # Hent siste melding fra resultatet
+        last_message = result["messages"][-1]
+        
+        # Returner resultatet i et format som er kompatibelt med resten av koden
+        return {
+            "content": last_message[1] if isinstance(last_message, tuple) else last_message.content
+        }
     
     return agent_executor
 
@@ -493,7 +404,7 @@ def create_crm_contacts(state: dict, config: dict) -> dict:
         }
     
     # Opprett agent
-    agent = create_attio_agent()
+    agent_executor = create_attio_agent()
     
     for user in analyzed_users:
         try:
@@ -501,12 +412,12 @@ def create_crm_contacts(state: dict, config: dict) -> dict:
             user_data = json.dumps(user, indent=2)
             
             # Kjør agenten
-            response = agent.invoke({"input": user_data})
+            response = agent_executor({"input": user_data})
             
             crm_results.append({
                 "user": user.get("email", user.get("name", "Ukjent bruker")),
                 "success": True,
-                "result": response.content
+                "result": response["content"]
             })
             
             messages.append(
