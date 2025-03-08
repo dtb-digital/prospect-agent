@@ -1,50 +1,54 @@
 import os
 import json
+from dotenv import load_dotenv
+from agent import analyze_domain
 import sys
 
-# Legg til prosjektets rotmappe i sys.path for å kunne importere fra agent.py
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from agent import create_attio_agent
-from langchain_core.messages import AIMessage
-from tools import get_attio_person_schema, get_attio_note_schema
+# Last inn miljøvariabler
+load_dotenv()
 
-# Last inn testdata
-with open("tests/test_data.json", "r") as f:
-    user_data = json.load(f)
+# Aktiver CRM-integrasjon for testen
+os.environ["ENABLE_CRM_INTEGRATION"] = "true"
 
-# Skriv ut brukerdata
-print(f"Brukerdata som sendes til agenten:")
-print(json.dumps(user_data, indent=2, ensure_ascii=False))
+def test_crm_integration():
+    """Test av CRM-integrasjon med Attio."""
+    
+    # Last inn testdata
+    with open("tests/test_data.json", "r") as f:
+        test_data = json.load(f)
+    
+    # Kjør analysen
+    domain = test_data.get("domain", "firi.com")
+    target_role = test_data.get("target_role", "ceo eller produktleder")
+    
+    # Kjør analysen
+    result = analyze_domain(domain, target_role, max_results=2)
+    
+    # Skriv ut brukerdata som sendes til agenten
+    print("Brukerdata som sendes til agenten:")
+    print(json.dumps({"users": result.get("users", []), "config": result.get("config", {})}, indent=2))
+    
+    # Skriv ut resultatet
+    if "crm_results" in result:
+        print("CRM-integrasjon resultat:")
+        print(json.dumps({"content": str(result.get("crm_results"))}, indent=2))
+    
+    if "note_results" in result:
+        print("CRM-notat resultat:")
+        print(json.dumps({"content": str(result.get("note_results"))}, indent=2))
+    
+    # Sjekk at vi har fått et resultat
+    assert result is not None
+    assert "users" in result
+    assert len(result["users"]) > 0
+    
+    # Sjekk at CRM-integrasjonen har kjørt
+    if "crm_results" in result:
+        assert len(result["crm_results"]) > 0
+    
+    # Sjekk at notat-opprettelsen har kjørt
+    if "note_results" in result:
+        assert len(result["note_results"]) > 0
 
-# Skriv ut antall felt
-print(f"Bruker {len(user_data.keys())} felt i brukerdataene\n")
-
-# Hent Attio-skjemaer for debugging
-print("\nAttio Person Schema:\n")
-print(get_attio_person_schema())
-print("\nAttio Note Schema:\n")
-print(get_attio_note_schema())
-print("\nKjører agenten med brukerdata...")
-
-# Opprett agent
-agent = create_attio_agent()
-
-# Kjør agenten
-result = agent({"input": json.dumps(user_data, ensure_ascii=False)})
-
-print(f"Resultat: {result}")
-
-# Skriv ut hele resultatet for debugging
-print("\nFullstendig resultat fra agenten:")
-print(json.dumps(result, indent=2, default=str))
-
-print("CRM-integrasjon resultat:")
-# Håndter AIMessage-objekter
-if isinstance(result, AIMessage):
-    print(f"Respons fra agenten: {result.content}")
-else:
-    # Prøv å konvertere til en serialiserbar form
-    serializable_result = {
-        "content": result.content if hasattr(result, "content") else str(result)
-    }
-    print(json.dumps(serializable_result, indent=2)) 
+if __name__ == "__main__":
+    test_crm_integration() 

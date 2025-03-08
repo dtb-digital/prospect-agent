@@ -115,9 +115,10 @@ def merge_users(current: List[Dict], update: List[Dict]) -> List[Dict]:
 class State(TypedDict):
     """State for workflowen."""
     messages: List[BaseMessage]
-    users: List[Dict]
-    config: Optional[SearchConfig]
-    crm_results: Optional[List[Dict[str, Any]]]
+    users: List[Dict[str, Any]]
+    config: Optional[Dict[str, Any]] = None
+    crm_results: Optional[List[Dict[str, Any]]] = None
+    note_results: Optional[List[Dict[str, Any]]] = None
 
 
 #######################
