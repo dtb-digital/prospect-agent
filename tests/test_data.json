@@ -1,47 +1,244 @@
 {
+  "domain": "documaster.com",
+  "target_role": "selger",
+  "max_results": 3,
   "users": [
     {
-      "email": "trang@firi.com",
-      "first_name": "Trang",
-      "last_name": "Hoang",
-      "role": "Chief Financial Officer",
-      "linkedin_url": "https://www.linkedin.com/in/trang-hoang-12810645",
-      "confidence": "94",
+      "email": "magnus.borgersen@documaster.com",
+      "first_name": "Magnus",
+      "last_name": "Borgersen",
+      "role": "Sales Executive",
+      "linkedin_url": "https://www.linkedin.com/in/magnus-borgersen-a219ba262",
+      "confidence": "99",
       "sources": [
-        "hunter"
-      ]
+        "hunter",
+        "prioritized",
+        "analyzed",
+        "linkedin"
+      ],
+      "priority_score": 1,
+      "priority_reason": "Magnus har en relevant rolle som Sales Executive, høy confidence score på 99, og en aktiv LinkedIn-profil som gir troverdighet.",
+      "location": {
+        "city": "",
+        "country": "Norway",
+        "region": ""
+      },
+      "headline": "Sales executive at Documaster",
+      "profile_image_url": "https://media.licdn.com/dms/image/v2/D4D03AQHjeH1HjGsUGg/profile-displayphoto-shrink_800_800/profile-displayphoto-shrink_800_800/0/1709652660806?e=1746662400&v=beta&t=ZreVU1L4C7u9RTdDa_QTlWJ5NFULGATxq6LYTKBVJnU",
+      "about": "Magnus Borgersen er en ambisiøs salgsekspert med en bakgrunn i osteopati og backend utvikling. Han har nylig startet som Sales Executive hos Documaster AS, hvor han fokuserer på dokumenthåndtering og teknologi. Med erfaring fra både helse- og detaljhandelssektoren, bringer han en unik kombinasjon av teknisk og menneskelig forståelse til salgsprosessen.",
+      "career": {
+        "current_role": "Sales Executive med ansvar for salg og kundeutvikling",
+        "current_company": "Documaster AS, et selskap som spesialiserer seg på dokumenthåndtering og programvareutvikling",
+        "company_industry": "Programvareutvikling, med fokus på dokumenthåndtering og sikkerhet",
+        "years_in_role": 0,
+        "years_in_company": 0,
+        "total_experience_years": 5,
+        "seniority_level": "Mid-level",
+        "responsibilities": [
+          "Utvikle og implementere salgsstrategier for dokumenthåndtering",
+          "Bygge relasjoner med kunder og forstå deres behov",
+          "Samarbeide med tekniske team for å tilpasse løsninger til kundens krav"
+        ]
+      },
+      "expertise": {
+        "primary_skills": [
+          "Salg",
+          "Kundeservice",
+          "Dokumenthåndtering",
+          "Backend utvikling"
+        ],
+        "industry_knowledge": [
+          "Helse",
+          "Detaljhandel",
+          "Programvareutvikling"
+        ],
+        "key_achievements": [
+          "Bygget en lojal kundebase som osteopat",
+          "Oppnådd salgsmål i tidligere stillinger"
+        ]
+      },
+      "education": {
+        "highest_degree": "Associate's degree",
+        "field_of_study": "Backend utvikling",
+        "institutions": [
+          {
+            "name": "Noroff",
+            "degree": "Associate's degree",
+            "field": "Backend utvikling",
+            "year": 2023
+          },
+          {
+            "name": "Kristiania University of Applied Sciences",
+            "degree": "Bachelor of Science - BS",
+            "field": "Osteopati",
+            "year": 2021
+          }
+        ]
+      },
+      "personality": {
+        "communication": {
+          "primary_style": "Praktisk og resultatorientert, med fokus på kundens behov",
+          "key_phrases": [
+            "Fokus på dokumenthåndtering",
+            "Bygge relasjoner med kunder"
+          ]
+        },
+        "motivations": {
+          "career_drivers": [
+            "Ønske om å hjelpe kunder med effektive løsninger",
+            "Interesse for teknologi og innovasjon"
+          ],
+          "value_priorities": [
+            "Kundeorientering",
+            "Kvalitet i arbeidet"
+          ]
+        }
+      }
     },
     {
-      "email": "karina@firi.com",
-      "first_name": "Karina",
-      "last_name": "Brix",
-      "role": "Country Manager",
-      "linkedin_url": "https://www.linkedin.com/in/karinarothoffbrix",
-      "confidence": "94",
+      "email": "alexander.nordin@documaster.com",
+      "first_name": "Alexander",
+      "last_name": "Nordin",
+      "role": "Sales Executive",
+      "linkedin_url": "https://www.linkedin.com/in/alexandernordin",
+      "confidence": "98",
       "sources": [
-        "linkedin",
         "hunter",
+        "prioritized",
         "analyzed",
-        "prioritized"
+        "linkedin"
       ],
-      "priority_score": 0.8,
-      "priority_reason": "Karina er Country Manager, som kan inneb\u00e6re ledelse og strategisk ansvar, men er ikke direkte en CEO- eller produktlederrolle. Hun har h\u00f8y confidence score og en LinkedIn-profil.",
-      "linkedin_raw_data": {
-        "about": "As the country manager Denmark at Firi, the largest cryptocurrency exchange in the Nordic region, I lead the strategy and operations of the Danish market, while fostering a culture of entrepreneurship, innovation, and lifelong learning within the organization."
-      },
+      "priority_score": 0.98,
+      "priority_reason": "Alexander er også en Sales Executive med høy confidence score på 98 og en tilgjengelig LinkedIn-profil, noe som gjør ham til en sterk kandidat.",
       "location": {
-        "city": "Copenhagen",
-        "country": "Danmark",
-        "region": "Capital Region of Denmark"
+        "city": "Gothenburg",
+        "country": "Sweden",
+        "region": "Västra Götaland County"
       },
-      "headline": "Country Manager & Board Member Firi",
-      "profile_image_url": "https://media.licdn.com/dms/image/v2/D4D03AQFpgbeqwCOjGg/profile-displayphoto-shrink_800_800/profile-displayphoto-shrink_800_800/0/1728641906660?e=1746662400&v=beta&t=V1NcR03jxD1vv4nFmiIAYd5pChe_PUukCaEY7YVtn7I",
-      "about": "Karina Rothoff Brix er en erfaren leder med over 10 \u00e5rs erfaring innen ulike bransjer, inkludert finansielle tjenester, utdanning og b\u00e6rekraft."
+      "headline": "Sales Executive i Documaster AS",
+      "profile_image_url": "https://media.licdn.com/dms/image/v2/D4D03AQES3NTG4ZgTkg/profile-displayphoto-shrink_400_400/profile-displayphoto-shrink_400_400/0/1710751525543?e=1746662400&v=beta&t=TsezGv14ZcY7F6GDXPonXQgHLCX9mvZl7_pNQYFNAb0",
+      "about": "Alexander Nordin er en erfaren salgsleder med over 5 års erfaring i Documaster AS, hvor han fokuserer på dokumenthåndteringsteknologi. Han har en bakgrunn innen salg og markedsføring, og har utviklet innovative metoder for å tiltrekke kunder. Med en sterk interesse for teknologi og organisering, er han dedikert til å hjelpe virksomheter med å sikre verdifulle data.",
+      "career": {
+        "current_role": "Sales Executive med ansvar for salg av dokumenthåndteringsløsninger",
+        "current_company": "Documaster AS",
+        "company_industry": "Programvareutvikling med fokus på dokumenthåndtering",
+        "years_in_company": 5,
+        "total_experience_years": 10,
+        "seniority_level": "Mid-level",
+        "responsibilities": [
+          "Utvikle og implementere salgsstrategier for dokumenthåndteringsløsninger",
+          "Bygge og vedlikeholde relasjoner med kunder og partnere",
+          "Gjennomføre produktdemonstrasjoner og presentasjoner for potensielle kunder"
+        ]
+      },
+      "expertise": {
+        "primary_skills": [
+          "Salg",
+          "Kundeutvikling",
+          "Dokumenthåndtering",
+          "Prospektering"
+        ],
+        "industry_knowledge": [
+          "Programvareutvikling",
+          "Dokumenthåndteringsteknologi",
+          "Rekruttering"
+        ],
+        "key_achievements": [
+          "Bidratt til økt salg med 30% i 2021 gjennom målrettede salgsstrategier",
+          "Utviklet innovative metoder for kundeengasjement som har forbedret konverteringsrater"
+        ]
+      },
+      "personality": {
+        "communication": {
+          "primary_style": "Direkte og resultatorientert med fokus på kundens behov",
+          "key_phrases": [
+            "søke opp dokumentasjon fra flere kilder",
+            "vår teknologi gjør det mulig",
+            "ta gjerne kontakt om du ønsker å se en demo"
+          ]
+        },
+        "motivations": {
+          "career_drivers": [
+            "Ønske om å hjelpe kunder med å løse problemer",
+            "Interesse for teknologi og innovasjon",
+            "Ambisjon om å utvikle seg innen salg"
+          ]
+        }
+      }
+    },
+    {
+      "email": "nicolai.brinchmann@documaster.com",
+      "first_name": "Nicolai",
+      "last_name": "Brinchmann",
+      "role": "Head of Sales",
+      "linkedin_url": "https://www.linkedin.com/in/nicolai-brinchmann-71855b14a",
+      "confidence": "97",
+      "sources": [
+        "hunter",
+        "prioritized",
+        "analyzed",
+        "linkedin"
+      ],
+      "priority_score": 0.97,
+      "priority_reason": "Nicolai har en relevant rolle som Head of Sales, høy confidence score på 97, og en LinkedIn-profil, noe som indikerer at han er en god match for salgsrelaterte aktiviteter.",
+      "location": {
+        "city": "Oslo",
+        "country": "Norway",
+        "region": "Oslo"
+      },
+      "headline": "Pushing the limits for document management in Norwegian public sector",
+      "profile_image_url": "https://media.licdn.com/dms/image/v2/D5603AQEw_EJzylXV0w/profile-displayphoto-shrink_800_800/profile-displayphoto-shrink_800_800/0/1715636175642?e=1746662400&v=beta&t=31iODq0DqpREJOB9PC9plYSblSqXgpaF7uQjAmojHY8",
+      "about": "Nicolai Brinchmann er en erfaren leder innen salg med en sterk bakgrunn i dokumenthåndtering, spesielt rettet mot den offentlige sektoren i Norge. Med over 6 års erfaring i Documaster AS, har han vist evne til å drive salg og utvikle strategier som møter kundenes behov. Nicolai er kjent for sin evne til å bygge relasjoner og skape resultater gjennom innovasjon og teknologi.",
+      "career": {
+        "current_role": "Head of Sales med ansvar for salg og strategisk utvikling",
+        "current_company": "Documaster AS",
+        "company_industry": "Programvareutvikling med fokus på dokumenthåndtering",
+        "years_in_company": 6,
+        "total_experience_years": 6,
+        "seniority_level": "Lead",
+        "responsibilities": [
+          "Utvikle og implementere salgsstrategier for offentlig sektor",
+          "Lede salgsteamet og sikre høy ytelse",
+          "Bygge relasjoner med nøkkelkunder og interessenter"
+        ]
+      },
+      "expertise": {
+        "primary_skills": [
+          "Salg",
+          "Strategisk utvikling",
+          "Kundepleie",
+          "Dokumenthåndtering"
+        ],
+        "industry_knowledge": [
+          "Offentlig sektor",
+          "Programvareutvikling"
+        ],
+        "key_achievements": [
+          "Ledet salgsteamet til 40% økning i omsetning i 2020",
+          "Utviklet nye salgsstrategier som økte kundetilfredsheten"
+        ]
+      },
+      "personality": {
+        "communication": {
+          "primary_style": "Strategisk og resultatorientert",
+          "key_phrases": [
+            "Pushing the limits for document management",
+            "Get organized!",
+            "Future proof solutions"
+          ]
+        },
+        "motivations": {
+          "career_drivers": [
+            "Ønske om å forbedre dokumenthåndtering i offentlig sektor",
+            "Motivasjon for å bygge sterke team og relasjoner"
+          ],
+          "value_priorities": [
+            "Kvalitet",
+            "Innovasjon",
+            "Kundeorientering"
+          ]
+        }
+      }
     }
-  ],
-  "config": {
-    "domain": "firi.com",
-    "target_role": "ceo eller produktleder",
-    "max_results": 5
-  }
+  ]
 }
