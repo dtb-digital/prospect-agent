@@ -10,7 +10,7 @@ import json
 import os
 from dotenv import load_dotenv
 from pydantic import BaseModel
-from tools import linkedin_tool, hunter_tool, assert_person_in_attio, create_note_in_attio, get_attio_person_schema, get_attio_note_schema
+from tools import linkedin_tool, hunter_tool, create_note_in_attio, create_person_in_attio
 from models import (
     SearchConfig, 
     PriorityAnalysis,
@@ -20,8 +20,9 @@ from models import (
     merge_users,
 )
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from system_prompts import get_analysis_prompt, get_priority_prompt
 from prompt_hub import get_prompt_from_hub
+import copy
+from datetime import datetime
 
 load_dotenv()
 
@@ -43,9 +44,17 @@ llm = ChatOpenAI(
     temperature=float(os.getenv("TEMPERATURE", DEFAULT_TEMPERATURE))
 )
 
-# Hent prompter fra LangSmith
-analysis_prompt = get_analysis_prompt()
-priority_prompt = get_priority_prompt()
+# Hent prompter direkte fra LangSmith
+try:
+    analysis_prompt = get_prompt_from_hub("prospect-agent-analysis-prompt")
+    priority_prompt = get_prompt_from_hub("prospect-agent-priority-prompt")
+except ValueError as e:
+    print(f"KRITISK FEIL: {str(e)}")
+    print("\nFor å løse dette problemet:")
+    print("1. Sørg for at LANGCHAIN_API_KEY er satt i .env-filen")
+    print("2. Sørg for at promptene eksisterer i LangSmith")
+    print("3. Eller synkroniser prompter fra lokale filer med: python -m prompt_hub sync_files_to_prompts")
+    raise
 
 # Definer prompts
 ANALYSIS_PROMPT = """
@@ -300,226 +309,150 @@ def analyze_profiles(state: dict, config: RunnableConfig) -> dict:
         "users": analyzed,
     }
 
-@traceable(run_type="chain", name="create_crm_contacts")
-def create_crm_contacts(state: dict, config: RunnableConfig) -> dict:
-    """Oppretter kontakter i CRM-systemet og lagrer person_id i state."""
-    # Filtrer ut kun analyserte brukere
-    analyzed_users = [
-        user for user in state["users"] 
-        if user.get("sources") and "analyzed" in user.get("sources", [])
-    ]
+@traceable(name="create_crm_contacts")
+def create_crm_contacts(state: State, config: RunnableConfig) -> State:
+    """Oppretter kontakter i CRM-systemet."""
+    # Sjekk om CRM-integrasjon er aktivert
+    if os.getenv("ENABLE_CRM_INTEGRATION") != "true":
+        print("CRM-integrasjon er deaktivert. Hopper over kontaktopprettelse.")
+        return state
     
-    if not analyzed_users:
-        return state  # Ingen endringer hvis ingen brukere
+    # Kopier state for å unngå å endre originalen
+    new_state = copy.deepcopy(state)
     
-    updated_users = state["users"].copy()
+    # Gå gjennom alle brukere
+    for i, user in enumerate(new_state["users"]):
+        print(f"Oppretter kontakt for {user.get('email')}")
+        
+        # Opprett kontakt i Attio (send hele user-objektet)
+        response = create_person_in_attio(user)
+        
+        # Sjekk om opprettelsen var vellykket
+        if "error" not in response and "data" in response:
+            # Legg til CRM-informasjon i brukeren
+            if "crm" not in user:
+                user["crm"] = {}
+            
+            user["crm"]["contact_created"] = True
+            user["crm"]["contact_id"] = response["data"]["id"]
+            print(f"Kontakt opprettet for {user.get('email')} med ID {response['data']['id']}")
+        else:
+            # Legg til feilmelding i brukeren
+            if "crm" not in user:
+                user["crm"] = {}
+            
+            user["crm"]["contact_created"] = False
+            user["crm"]["contact_error"] = response.get("error", "Ukjent feil")
+            print(f"Feil ved opprettelse av kontakt for {user.get('email')}: {response.get('error', 'Ukjent feil')}")
     
-    for user in analyzed_users:
-        try:
-            # Opprett kontakt i Attio
-            person_data = {
-                "data": {
-                    "values": {
-                        "email_addresses": [user.get("email")],
-                        "name": f"{user.get('first_name')} {user.get('last_name')}",
-                        "job_title": user.get("role"),
-                        "linkedin": user.get("linkedin_url")
-                    }
-                }
-            }
-            
-            # Fjern tomme felter
-            for key in list(person_data["data"]["values"].keys()):
-                if not person_data["data"]["values"][key]:
-                    del person_data["data"]["values"][key]
-            
-            # Opprett personen i Attio
-            person_response = assert_person_in_attio(json.dumps(person_data))
-            
-            # Hent person_id fra responsen
-            person_response_json = json.loads(person_response) if isinstance(person_response, str) else person_response
-            person_id = person_response_json["data"]["id"]["record_id"]
-            
-            # Oppdater bruker med person_id og CRM-info
-            user_with_id = {
-                **user,
-                "attio_person_id": person_id,
-                "crm": {
-                    "contact_created": True,
-                    "contact_created_at": person_response_json["data"]["created_at"],
-                    "note_created": False
-                },
-                "sources": user.get("sources", []) + ["crm"]
-            }
-            
-            # Oppdater brukerlisten
-            updated_users = merge_users(updated_users, [user_with_id])
-            
-        except Exception as e:
-            print(f"Feil ved oppretting av kontakt for {user.get('email')}: {str(e)}")
-            
-            # Oppdater bruker med feilinformasjon
-            user_with_error = {
-                **user,
-                "crm": {
-                    "contact_created": False,
-                    "contact_error": str(e)
-                }
-            }
-            
-            # Oppdater brukerlisten
-            updated_users = merge_users(updated_users, [user_with_error])
-    
-    return {
-        **state,
-        "users": updated_users
-    }
+    return new_state
 
-@traceable(run_type="chain", name="create_crm_notes")
+@traceable(run_type="chain", name="crm_notes")
 def create_crm_notes(state: dict, config: RunnableConfig) -> dict:
-    """Oppretter notater for brukere med person_id med fokus på salgsverdige detaljer."""
-    # Filtrer ut brukere som har person_id
-    users_with_person_id = [
-        user for user in state["users"] 
-        if user.get("attio_person_id")
-    ]
+    """Oppretter notater i CRM-systemet basert på analyserte brukere."""
+    if not os.getenv("ENABLE_CRM_INTEGRATION", "false").lower() == "true":
+        return state
     
-    if not users_with_person_id:
-        return state  # Ingen endringer hvis ingen brukere med person_id
+    print("Oppretter notater i CRM-systemet...")
     
-    updated_users = state["users"].copy()
-    
-    for user in users_with_person_id:
-        try:
-            # Opprett notat i Attio
-            note_title = f"Salgsnotat: {user.get('first_name')} {user.get('last_name')} - {user.get('role')}"
-            
-            # Bygg notat-innhold med fokus på salgsverdige detaljer
-            note_content = f"# Nøkkelinformasjon\n"
-            
-            # Legg til om-tekst hvis tilgjengelig (dette er en oppsummering)
-            if user.get("about"):
-                note_content += f"{user.get('about')}\n\n"
-            
-            # Legg til karriere-informasjon
-            if user.get("career"):
-                career = user.get("career", {})
-                note_content += f"# Karriere\n"
+    try:
+        # Lag en kopi av brukerne for å unngå å endre originalen direkte
+        updated_users = copy.deepcopy(state.get("users", []))
+        
+        for i, user in enumerate(updated_users):
+            if user.get("crm", {}).get("contact_created") and not user.get("crm", {}).get("note_created"):
+                person_id = user.get("attio_person_id") or user.get("crm", {}).get("contact_id")
+                if not person_id:
+                    print(f"Ingen person-ID funnet for {user.get('email')}")
+                    continue
                 
-                if career.get("current_role") and career.get("current_company"):
-                    note_content += f"Nåværende stilling: {career.get('current_role')} hos {career.get('current_company')}\n"
+                # Lag notat-innhold basert på brukerdata
+                note_content = f"# Analyse av {user.get('first_name', '')} {user.get('last_name', '')}\n\n"
                 
-                if career.get("years_in_company"):
-                    note_content += f"Ansiennitet: {career.get('years_in_company')} år i nåværende selskap\n"
+                if user.get("about"):
+                    note_content += f"## Om personen\n{user.get('about')}\n\n"
                 
-                if career.get("total_experience_years"):
-                    note_content += f"Total erfaring: {career.get('total_experience_years')} år\n"
+                if user.get("career"):
+                    note_content += "## Karriere\n"
+                    career = user.get("career", {})
+                    if career.get("current_role"):
+                        note_content += f"- Nåværende rolle: {career.get('current_role')}\n"
+                    if career.get("current_company"):
+                        note_content += f"- Nåværende selskap: {career.get('current_company')}\n"
+                    if career.get("responsibilities"):
+                        note_content += "- Ansvarsområder:\n"
+                        for resp in career.get("responsibilities", []):
+                            note_content += f"  - {resp}\n"
+                    note_content += "\n"
                 
-                if career.get("responsibilities") and len(career.get("responsibilities", [])) > 0:
-                    note_content += f"\nAnsvarsområder:\n"
-                    for resp in career.get("responsibilities", []):
-                        note_content += f"- {resp}\n"
+                if user.get("expertise"):
+                    note_content += "## Ekspertise\n"
+                    expertise = user.get("expertise", {})
+                    if expertise.get("primary_skills"):
+                        note_content += "- Primære ferdigheter:\n"
+                        for skill in expertise.get("primary_skills", []):
+                            note_content += f"  - {skill}\n"
+                    if expertise.get("key_achievements"):
+                        note_content += "- Nøkkelprestasjoner:\n"
+                        for achievement in expertise.get("key_achievements", []):
+                            note_content += f"  - {achievement}\n"
+                    note_content += "\n"
                 
-                note_content += "\n"
-            
-            # Legg til ekspertise
-            if user.get("expertise"):
-                expertise = user.get("expertise", {})
-                note_content += f"# Ekspertise og ferdigheter\n"
+                if user.get("personality"):
+                    note_content += "## Personlighet\n"
+                    personality = user.get("personality", {})
+                    if personality.get("communication", {}).get("primary_style"):
+                        note_content += f"- Kommunikasjonsstil: {personality.get('communication', {}).get('primary_style')}\n"
+                    if personality.get("motivations", {}).get("career_drivers"):
+                        note_content += "- Karrieredrivere:\n"
+                        for driver in personality.get("motivations", {}).get("career_drivers", []):
+                            note_content += f"  - {driver}\n"
+                    note_content += "\n"
                 
-                if expertise.get("primary_skills") and len(expertise.get("primary_skills", [])) > 0:
-                    note_content += f"Kjernekompetanse: {', '.join(expertise.get('primary_skills', []))}\n"
+                # Legg til kilde og dato
+                note_content += f"\nKilde: Prospect Agent\nDato: {datetime.now().strftime('%Y-%m-%d')}"
                 
-                if expertise.get("industry_knowledge") and len(expertise.get("industry_knowledge", [])) > 0:
-                    note_content += f"Bransjekunnskap: {', '.join(expertise.get('industry_knowledge', []))}\n"
+                print(f"Oppretter notat for {user.get('email')} med person-ID {person_id}")
                 
-                if expertise.get("key_achievements") and len(expertise.get("key_achievements", [])) > 0:
-                    note_content += f"\nViktige prestasjoner:\n"
-                    for achievement in expertise.get("key_achievements", []):
-                        note_content += f"- {achievement}\n"
-                
-                note_content += "\n"
-            
-            # Legg til personlighet og kommunikasjonsstil
-            if user.get("personality"):
-                personality = user.get("personality", {})
-                note_content += f"# Personlighet og kommunikasjonsstil\n"
-                
-                if personality.get("communication", {}).get("primary_style"):
-                    note_content += f"Kommunikasjonsstil: {personality.get('communication', {}).get('primary_style')}\n"
-                
-                if personality.get("work_style", {}).get("problem_solving"):
-                    note_content += f"Problemløsning: {personality.get('work_style', {}).get('problem_solving')}\n"
-                
-                if personality.get("motivations", {}).get("career_drivers") and len(personality.get("motivations", {}).get("career_drivers", [])) > 0:
-                    note_content += f"\nMotiveres av:\n"
-                    for driver in personality.get("motivations", {}).get("career_drivers", []):
-                        note_content += f"- {driver}\n"
-                
-                note_content += "\n"
-            
-            # Legg til prioriteringsinformasjon hvis tilgjengelig
-            if user.get("priority_score") and user.get("priority_reason"):
-                note_content += f"# Prioritering for {state['config']['target_role']}\n"
-                note_content += f"Score: {user.get('priority_score')}\n"
-                note_content += f"Begrunnelse: {user.get('priority_reason')}\n\n"
-            
-            # Legg til kontaktinformasjon og tips for oppfølging
-            note_content += f"# Tips for oppfølging\n"
-            
-            if user.get("personality", {}).get("communication", {}).get("key_phrases") and len(user.get("personality", {}).get("communication", {}).get("key_phrases", [])) > 0:
-                note_content += "Nøkkelfraser å referere til:\n"
-                for phrase in user.get("personality", {}).get("communication", {}).get("key_phrases", []):
-                    note_content += f"- \"{phrase}\"\n"
-            
-            note_data = {
-                "data": {
-                    "parent_object": "people",
-                    "parent_record_id": user["attio_person_id"],
-                    "title": note_title,
-                    "format": "plaintext",
-                    "content": note_content
-                }
-            }
-            
-            # Opprett notatet i Attio
-            note_response = create_note_in_attio(json.dumps(note_data))
-            note_response_json = json.loads(note_response) if isinstance(note_response, str) else note_response
-            
-            # Oppdater bruker med notat-info
-            user_with_note = {
-                **user,
-                "crm": {
-                    **(user.get("crm", {})),
-                    "note_created": True,
-                    "note_created_at": note_response_json["data"]["created_at"],
-                    "note_id": note_response_json["data"]["id"]
-                }
-            }
-            
-            # Oppdater brukerlisten
-            updated_users = merge_users(updated_users, [user_with_note])
-            
-        except Exception as e:
-            print(f"Feil ved oppretting av notat for {user.get('email')}: {str(e)}")
-            
-            # Oppdater bruker med feilinformasjon
-            user_with_error = {
-                **user,
-                "crm": {
-                    **(user.get("crm", {})),
-                    "note_created": False,
-                    "note_error": str(e)
-                }
-            }
-            
-            # Oppdater brukerlisten
-            updated_users = merge_users(updated_users, [user_with_error])
-    
-    return {
-        **state,
-        "users": updated_users
-    }
+                try:
+                    # Opprett notat i Attio med den nye funksjonen
+                    response = create_note_in_attio({
+                        "person_id": person_id,
+                        "content": note_content,
+                        "title": f"Analyse av {user.get('first_name', '')} {user.get('last_name', '')}"
+                    })
+                    
+                    print(f"Attio API-respons: {json.dumps(response, indent=2)}")
+                    
+                    # Sjekk om opprettelsen var vellykket
+                    if "error" not in response and "data" in response:
+                        # Oppdater brukeren med CRM-informasjon
+                        if "crm" not in updated_users[i]:
+                            updated_users[i]["crm"] = {}
+                        
+                        updated_users[i]["crm"]["note_created"] = True
+                        updated_users[i]["crm"]["note_created_at"] = response.get("data", {}).get("created_at")
+                        updated_users[i]["crm"]["note_id"] = response.get("data", {}).get("id")
+                        print(f"Notat opprettet for {user.get('email')} med ID {response.get('data', {}).get('id')}")
+                    else:
+                        # Legg til feilmelding i brukeren
+                        if "crm" not in updated_users[i]:
+                            updated_users[i]["crm"] = {}
+                        
+                        updated_users[i]["crm"]["note_created"] = False
+                        updated_users[i]["crm"]["note_error"] = response.get("error", "Ukjent feil")
+                        print(f"Feil ved opprettelse av notat for {user.get('email')}: {response.get('error', 'Ukjent feil')}")
+                except Exception as e:
+                    print(f"Feil ved opprettelse av notat: {str(e)}")
+        
+        # Returner oppdatert state
+        return {
+            **state,
+            "users": updated_users
+        }
+    except Exception as e:
+        print(f"Feil ved opprettelse av notater: {str(e)}")
+        return state
 
 def create_workflow() -> StateGraph:
     """Oppretter workflow."""

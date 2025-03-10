@@ -100,63 +100,42 @@ hunter_tool = StructuredTool(
 )
 
 # Attio CRM Tools
-@traceable(name="create_person_in_attio")
-def create_person_in_attio(person_data: str) -> str:
+@traceable(name="create_person_in_attio", project=os.getenv("LANGCHAIN_PROJECT", "prospect-agent"))
+def create_person_in_attio(user_data: dict) -> dict:
     """
-    Oppretter en person i Attio CRM.
+    Oppretter en person i Attio basert på brukerdata.
     
     Args:
-        person_data: JSON-streng med persondata i Attio-format
+        user_data: Dictionary med brukerdata (kan være hele user-objektet)
         
     Returns:
-        JSON-streng med respons fra Attio API
+        Dictionary med API-respons eller feilmelding
     """
-    api_key = os.getenv("ATTIO_API_KEY")
-    
-    if not api_key:
-        return "ATTIO_API_KEY må være satt i .env-filen"
-    
-    url = "https://api.attio.com/v2/objects/people/records"
-    
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-        "Accept": "application/json"
-    }
+    print(f"create_person_in_attio kalt med bruker: {user_data.get('email', 'ukjent')}")
     
     try:
-        # Konverter streng til JSON hvis det er en streng
-        if isinstance(person_data, str):
-            data = json.loads(person_data)
-        else:
-            data = person_data
+        # Ekstraher nødvendige felter fra brukerdata
+        email = user_data.get("email")
+        first_name = user_data.get("first_name")
+        last_name = user_data.get("last_name", "")
+        title = user_data.get("role") or user_data.get("career", {}).get("current_role", "")
+        linkedin_url = user_data.get("linkedin_url", "")
         
-        response = requests.post(url, headers=headers, json=data)
+        # Sjekk at vi har nødvendige data
+        if not email or not first_name:
+            return {"error": "Mangler nødvendig informasjon (email eller first_name)"}
         
-        if response.status_code >= 400:
-            return f"Feil ved oppretting av person i Attio: {response.text}"
-        
-        return json.dumps(response.json(), indent=2)
-    
-    except Exception as e:
-        return f"Feil ved oppretting av person i Attio: {str(e)}"
-
-@traceable(name="assert_person_in_attio", project=os.getenv("LANGCHAIN_PROJECT", "prospect-agent"))
-def assert_person_in_attio(person_data: str) -> str:
-    """
-    Oppretter eller oppdaterer en person i Attio CRM basert på persondata i Attio-format.
-    
-    Args:
-        person_data: JSON-streng med persondata i Attio-format
-        
-    Returns:
-        JSON-streng med responsen fra Attio API
-    """
-    print(f"assert_person_in_attio kalt med: {person_data[:100]}...")
-    
-    try:
-        # Parse JSON-strengen til et Python-objekt
-        data = json.loads(person_data)
+        # Opprett data for Attio API
+        data = {
+            "data": {
+                "values": {
+                    "email_addresses": [email],
+                    "name": f"{first_name} {last_name}".strip(),
+                    "job_title": title,
+                    "linkedin": linkedin_url
+                }
+            }
+        }
         
         # Opprett personen i Attio
         api_key = os.getenv("ATTIO_API_KEY")
@@ -176,28 +155,66 @@ def assert_person_in_attio(person_data: str) -> str:
         # Sjekk om responsen er vellykket
         response.raise_for_status()
         
-        # Returner responsen som JSON-streng
+        # Returner responsen som JSON
+        print(f"create_person_in_attio response: {json.dumps(response.json(), indent=2)}")
         return response.json()
     except Exception as e:
         print(f"Feil ved oppretting av person i Attio: {e}")
-        raise
+        # Returner en feilmelding i stedet for å kaste en exception
+        return {"error": str(e)}
 
 @traceable(name="create_note_in_attio", project=os.getenv("LANGCHAIN_PROJECT", "prospect-agent"))
-def create_note_in_attio(note_data: str) -> str:
+def create_note_in_attio(note_params: dict) -> dict:
     """
     Oppretter et notat i Attio CRM knyttet til en person.
     
     Args:
-        note_data: JSON-streng med notatdata i Attio-format
-        
+        note_params: Dictionary med notatdata
+            - person_id: ID til personen notatet skal knyttes til
+            - content: Innholdet i notatet
+            - title: (valgfritt) Tittel på notatet
+            
     Returns:
-        JSON-streng med responsen fra Attio API
+        Dictionary med API-respons eller feilmelding
     """
-    print(f"create_note_in_attio kalt med: {note_data[:100]}...")
+    print(f"create_note_in_attio kalt med person_id: {note_params.get('person_id')}")
     
     try:
-        # Parse JSON-strengen til et Python-objekt
-        data = json.loads(note_data)
+        # Ekstraher nødvendige felter
+        person_id = note_params.get("person_id")
+        content = note_params.get("content", "")
+        
+        # Generer en tittel hvis den ikke er gitt
+        title = note_params.get("title")
+        if not title and content:
+            # Bruk første linje som tittel, eller de første 50 tegnene
+            first_line = content.split('\n', 1)[0].strip()
+            if first_line.startswith('# '):
+                title = first_line[2:]  # Fjern markdown-overskrift
+            else:
+                title = first_line[:50] + ('...' if len(first_line) > 50 else '')
+        
+        # Sjekk at vi har nødvendige data
+        if not person_id or not content:
+            return {"error": "Mangler nødvendig informasjon (person_id eller content)"}
+        
+        if not title:
+            title = "Notat fra Prospect Agent"
+        
+        # Hvis person_id er et objekt, hent ut record_id
+        if isinstance(person_id, dict) and "record_id" in person_id:
+            person_id = person_id["record_id"]
+        
+        # Opprett data for Attio API
+        data = {
+            "data": {
+                "parent_object": "people",
+                "parent_record_id": person_id,
+                "title": title,
+                "format": "plaintext",
+                "content": content
+            }
+        }
         
         # Opprett notatet i Attio
         api_key = os.getenv("ATTIO_API_KEY")
@@ -217,48 +234,10 @@ def create_note_in_attio(note_data: str) -> str:
         # Sjekk om responsen er vellykket
         response.raise_for_status()
         
-        # Returner responsen som JSON-streng
+        # Returner responsen som JSON
+        print(f"create_note_in_attio response: {json.dumps(response.json(), indent=2)}")
         return response.json()
     except Exception as e:
         print(f"Feil ved oppretting av notat i Attio: {e}")
-        raise
-
-@traceable(name="get_attio_person_schema", project=os.getenv("LANGCHAIN_PROJECT", "prospect-agent"))
-def get_attio_person_schema() -> str:
-    """
-    Henter skjema for personer i Attio.
-    
-    Returns streng med JSON-skjema for personer
-    """
-    return """
-    {
-      "data": {
-        "values": {
-          "email_addresses": ["email@example.com"],
-          "name": "Fullt navn",
-          "job_title": "Stillingstittel",
-          "linkedin": "LinkedIn URL",
-          "phone_numbers": ["Telefonnummer"]
-        }
-      }
-    }
-    """
-
-@traceable(name="get_attio_note_schema", project=os.getenv("LANGCHAIN_PROJECT", "prospect-agent"))
-def get_attio_note_schema() -> str:
-    """
-    Henter skjema for notater i Attio.
-    
-    Returns streng med JSON-skjema for notater
-    """
-    return """
-    {
-      "data": {
-        "parent_object": "people",
-        "parent_record_id": "record_id_streng_her",
-        "title": "Notat-tittel",
-        "format": "plaintext",
-        "content": "Notat-innhold med \\n for linjeskift"
-      }
-    }
-    """ 
+        # Returner en feilmelding i stedet for å kaste en exception
+        return {"error": str(e)}
