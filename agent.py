@@ -367,7 +367,14 @@ def create_crm_contacts(state: dict, config: RunnableConfig) -> dict:
         # Liste for oppdaterte brukere
         updated_users = []
         
-        for user in state.get("users", []):
+        # Filtrer brukere som har blitt analysert
+        analyzed_users = [u for u in state.get("users", []) if "analyzed" in u.get("sources", [])]
+        
+        if not analyzed_users:
+            print("Ingen analyserte brukere å opprette kontakter for.")
+            return state
+        
+        for user in analyzed_users:
             print(f"Oppretter kontakt for {user.get('email')}")
             
             # Opprett kontakt i Attio (send hele user-objektet)
