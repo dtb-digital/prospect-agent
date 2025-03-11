@@ -46,8 +46,12 @@ llm = ChatOpenAI(
 
 # Hent prompter direkte fra LangSmith
 try:
-    analysis_prompt = get_prompt_from_hub("prospect-agent-analysis-prompt")
-    priority_prompt = get_prompt_from_hub("prospect-agent-priority-prompt")
+    analysis_prompt_template = get_prompt_from_hub("prospect-agent-analysis-prompt")
+    priority_prompt_template = get_prompt_from_hub("prospect-agent-priority-prompt")
+    
+    # Hent ut system-prompten fra ChatPromptTemplate
+    analysis_system_prompt = analysis_prompt_template.messages[0].prompt.template
+    priority_system_prompt = priority_prompt_template.messages[0].prompt.template
 except ValueError as e:
     print(f"KRITISK FEIL: {str(e)}")
     print("\nFor å løse dette problemet:")
@@ -89,7 +93,7 @@ FORVENTET OUTPUT FORMAT:
 # Bind modeller til strukturert output
 analysis_chain = (
     ChatPromptTemplate.from_messages([
-        ("system", analysis_prompt),
+        ("system", analysis_system_prompt),
         ("human", ANALYSIS_PROMPT)
     ])
     | llm.with_structured_output(User, method="json_mode")
@@ -97,7 +101,7 @@ analysis_chain = (
 
 priority_chain = (
     ChatPromptTemplate.from_messages([
-        ("system", priority_prompt),
+        ("system", priority_system_prompt),
         ("human", PRIORITY_PROMPT)
     ])
     | llm.with_structured_output(PriorityAnalysis, method="json_mode")
@@ -139,7 +143,7 @@ def collect_hunter_data(state: dict, config: RunnableConfig) -> dict:
         }
 
 # PRIORITERING NODE
-@traceable(run_type="chain", name="prioritize_users")
+@traceable(run_type="chain", name="prioritize")
 def prioritize_users(state: dict, config: RunnableConfig) -> dict:
     """Prioriterer brukere basert på deres egnethet for målrollen."""
     # Hent alle brukere fra state
@@ -162,28 +166,36 @@ def prioritize_users(state: dict, config: RunnableConfig) -> dict:
         })
         
         try:
-            # Start med alle brukere
-            updated_users = all_users.copy()
+            # Lag en liste med bare de prioriterte brukerne
+            prioritized_users = []
             
-            # Oppdater de som ble prioritert
-            for i, user in enumerate(updated_users):
-                if user["email"] in {p.email for p in response.users}:
-                    priority_user = next(p for p in response.users if p.email == user["email"])
+            for priority_user in response.users:
+                # Finn den originale brukeren
+                original_user = next((u for u in all_users if u["email"] == priority_user.email), None)
+                
+                if original_user:
                     # Valider score
                     if not 0 <= priority_user.score <= 1:
-                        raise ValueError(f"Ugyldig score {priority_user.score} for {user['email']}")
-                    updated_users[i] = {
-                        **user,
+                        raise ValueError(f"Ugyldig score {priority_user.score} for {priority_user.email}")
+                    
+                    # Lag en oppdatert versjon av brukeren
+                    prioritized_user = {
+                        **original_user,
                         "priority_score": priority_user.score,
                         "priority_reason": priority_user.reason,
-                        "sources": user["sources"] + ["prioritized"]
+                        "sources": original_user["sources"] + ["prioritized"]
                     }
+                    
+                    prioritized_users.append(prioritized_user)
+            
+            # Bruk merge_users for å oppdatere state
+            merged_users = merge_users(state.get("users", []), prioritized_users)
             
             return {
                 "messages": [
                     AIMessage(content=f"Prioriterte {len(response.users)} brukere")
                 ],
-                "users": updated_users,
+                "users": merged_users,
                 "config": state["config"]
             }
         except json.JSONDecodeError as je:
@@ -240,9 +252,12 @@ def get_linkedin_data(state: dict, config: RunnableConfig) -> dict:
                 )
             )
     
+    # Bruk merge_users for å oppdatere state
+    merged_users = merge_users(state.get("users", []), enriched)
+    
     return {
         "messages": messages,
-        "users": enriched,
+        "users": merged_users,
     }
 
 # ANALYSE NODE
@@ -274,6 +289,10 @@ def analyze_profiles(state: dict, config: RunnableConfig) -> dict:
             try:
                 analysis_results = response.dict()
                 
+                # Sikre at vi har med e-postadressen
+                if "email" not in analysis_results and "email" in user:
+                    analysis_results["email"] = user["email"]
+                
                 # Behold bare spesifikke felter fra original bruker
                 analyzed_user = {
                     **analysis_results,  # Nye data først
@@ -291,11 +310,33 @@ def analyze_profiles(state: dict, config: RunnableConfig) -> dict:
                     )
                 )
             except json.JSONDecodeError as je:
+                # Legg til en feilmelding i brukeren
+                error_user = {
+                    **user,
+                    "analysis_error": f"Kunne ikke parse JSON fra LLM respons: {str(je)}",
+                    "sources": user["sources"] + ["analysis_failed"]
+                }
+                analyzed.append(error_user)
                 raise ValueError(f"Kunne ikke parse JSON fra LLM respons for {user['email']}")
             except Exception as ve:
+                # Legg til en feilmelding i brukeren
+                error_user = {
+                    **user,
+                    "analysis_error": f"Validering feilet: {str(ve)}",
+                    "sources": user["sources"] + ["analysis_failed"]
+                }
+                analyzed.append(error_user)
                 raise ValueError(f"Validering feilet for {user['email']}")
                 
         except Exception as e:
+            # Legg til en feilmelding i brukeren
+            error_user = {
+                **user,
+                "analysis_error": f"Analyse feilet: {str(e)}",
+                "sources": user["sources"] + ["analysis_failed"]
+            }
+            analyzed.append(error_user)
+            
             messages.append(
                 ToolMessage(
                     tool_call_id=f"analyze_error_{user['email']}",
@@ -304,48 +345,69 @@ def analyze_profiles(state: dict, config: RunnableConfig) -> dict:
                 )
             )
     
+    # Bruk merge_users for å oppdatere state
+    merged_users = merge_users(state.get("users", []), analyzed)
+    
     return {
         "messages": messages,
-        "users": analyzed,
+        "users": merged_users,
     }
 
 @traceable(name="create_crm_contacts")
-def create_crm_contacts(state: State, config: RunnableConfig) -> State:
+def create_crm_contacts(state: dict, config: RunnableConfig) -> dict:
     """Oppretter kontakter i CRM-systemet."""
     # Sjekk om CRM-integrasjon er aktivert
     if os.getenv("ENABLE_CRM_INTEGRATION") != "true":
         print("CRM-integrasjon er deaktivert. Hopper over kontaktopprettelse.")
         return state
     
-    # Kopier state for å unngå å endre originalen
-    new_state = copy.deepcopy(state)
+    print("Oppretter kontakter i CRM-systemet...")
     
-    # Gå gjennom alle brukere
-    for i, user in enumerate(new_state["users"]):
-        print(f"Oppretter kontakt for {user.get('email')}")
+    try:
+        # Liste for oppdaterte brukere
+        updated_users = []
         
-        # Opprett kontakt i Attio (send hele user-objektet)
-        response = create_person_in_attio(user)
+        for user in state.get("users", []):
+            print(f"Oppretter kontakt for {user.get('email')}")
+            
+            # Opprett kontakt i Attio (send hele user-objektet)
+            response = create_person_in_attio(user)
+            
+            # Lag en kopi av brukeren for oppdatering
+            updated_user = copy.deepcopy(user)
+            
+            # Sjekk om opprettelsen var vellykket
+            if "error" not in response and "data" in response:
+                # Legg til CRM-informasjon i brukeren
+                if "crm" not in updated_user:
+                    updated_user["crm"] = {}
+                
+                updated_user["crm"]["contact_created"] = True
+                updated_user["crm"]["contact_id"] = response["data"]["id"]
+                print(f"Kontakt opprettet for {user.get('email')} med ID {response['data']['id']}")
+            else:
+                # Legg til feilmelding i brukeren
+                if "crm" not in updated_user:
+                    updated_user["crm"] = {}
+                
+                updated_user["crm"]["contact_created"] = False
+                updated_user["crm"]["contact_error"] = response.get("error", "Ukjent feil")
+                print(f"Feil ved opprettelse av kontakt for {user.get('email')}: {response.get('error', 'Ukjent feil')}")
+            
+            # Legg til den oppdaterte brukeren
+            updated_users.append(updated_user)
         
-        # Sjekk om opprettelsen var vellykket
-        if "error" not in response and "data" in response:
-            # Legg til CRM-informasjon i brukeren
-            if "crm" not in user:
-                user["crm"] = {}
-            
-            user["crm"]["contact_created"] = True
-            user["crm"]["contact_id"] = response["data"]["id"]
-            print(f"Kontakt opprettet for {user.get('email')} med ID {response['data']['id']}")
-        else:
-            # Legg til feilmelding i brukeren
-            if "crm" not in user:
-                user["crm"] = {}
-            
-            user["crm"]["contact_created"] = False
-            user["crm"]["contact_error"] = response.get("error", "Ukjent feil")
-            print(f"Feil ved opprettelse av kontakt for {user.get('email')}: {response.get('error', 'Ukjent feil')}")
-    
-    return new_state
+        # Bruk merge_users for å oppdatere state
+        merged_users = merge_users(state.get("users", []), updated_users)
+        
+        # Returner oppdatert state
+        return {
+            **state,
+            "users": merged_users
+        }
+    except Exception as e:
+        print(f"Feil ved opprettelse av kontakter: {str(e)}")
+        return state
 
 @traceable(run_type="chain", name="crm_notes")
 def create_crm_notes(state: dict, config: RunnableConfig) -> dict:
@@ -356,10 +418,10 @@ def create_crm_notes(state: dict, config: RunnableConfig) -> dict:
     print("Oppretter notater i CRM-systemet...")
     
     try:
-        # Lag en kopi av brukerne for å unngå å endre originalen direkte
-        updated_users = copy.deepcopy(state.get("users", []))
+        # Liste for oppdaterte brukere
+        updated_users = []
         
-        for i, user in enumerate(updated_users):
+        for user in state.get("users", []):
             if user.get("crm", {}).get("contact_created") and not user.get("crm", {}).get("note_created"):
                 person_id = user.get("attio_person_id") or user.get("crm", {}).get("contact_id")
                 if not person_id:
@@ -424,31 +486,43 @@ def create_crm_notes(state: dict, config: RunnableConfig) -> dict:
                     
                     print(f"Attio API-respons: {json.dumps(response, indent=2)}")
                     
+                    # Lag en kopi av brukeren for oppdatering
+                    updated_user = copy.deepcopy(user)
+                    
                     # Sjekk om opprettelsen var vellykket
                     if "error" not in response and "data" in response:
                         # Oppdater brukeren med CRM-informasjon
-                        if "crm" not in updated_users[i]:
-                            updated_users[i]["crm"] = {}
+                        if "crm" not in updated_user:
+                            updated_user["crm"] = {}
                         
-                        updated_users[i]["crm"]["note_created"] = True
-                        updated_users[i]["crm"]["note_created_at"] = response.get("data", {}).get("created_at")
-                        updated_users[i]["crm"]["note_id"] = response.get("data", {}).get("id")
+                        updated_user["crm"]["note_created"] = True
+                        updated_user["crm"]["note_created_at"] = response.get("data", {}).get("created_at")
+                        updated_user["crm"]["note_id"] = response.get("data", {}).get("id")
                         print(f"Notat opprettet for {user.get('email')} med ID {response.get('data', {}).get('id')}")
                     else:
                         # Legg til feilmelding i brukeren
-                        if "crm" not in updated_users[i]:
-                            updated_users[i]["crm"] = {}
+                        if "crm" not in updated_user:
+                            updated_user["crm"] = {}
                         
-                        updated_users[i]["crm"]["note_created"] = False
-                        updated_users[i]["crm"]["note_error"] = response.get("error", "Ukjent feil")
+                        updated_user["crm"]["note_created"] = False
+                        updated_user["crm"]["note_error"] = response.get("error", "Ukjent feil")
                         print(f"Feil ved opprettelse av notat for {user.get('email')}: {response.get('error', 'Ukjent feil')}")
+                    
+                    # Legg til den oppdaterte brukeren
+                    updated_users.append(updated_user)
                 except Exception as e:
                     print(f"Feil ved opprettelse av notat: {str(e)}")
+            else:
+                # Brukeren trenger ikke notat, så vi legger den til uendret
+                updated_users.append(user)
+        
+        # Bruk merge_users for å oppdatere state
+        merged_users = merge_users(state.get("users", []), updated_users)
         
         # Returner oppdatert state
         return {
             **state,
-            "users": updated_users
+            "users": merged_users
         }
     except Exception as e:
         print(f"Feil ved opprettelse av notater: {str(e)}")

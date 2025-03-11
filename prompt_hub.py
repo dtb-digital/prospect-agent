@@ -14,36 +14,64 @@ load_dotenv()
 # Initialiser LangSmith klienten
 client = Client()
 
-def get_prompt_from_hub(prompt_name: str) -> str:
+def get_prompt_from_hub(prompt_name: str) -> ChatPromptTemplate:
     """
-    Henter en prompt fra LangSmith Prompt Hub.
+    Henter en prompt fra LangSmith prompt-hub.
     
     Args:
         prompt_name: Navnet på prompten i LangSmith
         
     Returns:
-        Prompten som en streng
-        
-    Raises:
-        ValueError: Hvis prompten ikke kan hentes
+        ChatPromptTemplate: Den lastede prompten
     """
+    # Prøv å lese fra lokale filer først
     try:
-        # Sjekk om LANGCHAIN_API_KEY er satt
-        if not os.getenv("LANGCHAIN_API_KEY"):
-            raise ValueError(f"LANGCHAIN_API_KEY er ikke satt. Kan ikke hente prompt '{prompt_name}'.")
+        # Sjekk om filen eksisterer direkte med prompt-navnet
+        prompt_file = f"prompts/{prompt_name}.txt"
+        if not os.path.exists(prompt_file):
+            # Prøv med underscore i stedet for bindestrek
+            prompt_file = f"prompts/{prompt_name.replace('-', '_')}.txt"
         
-        # Hent prompten fra LangSmith
+        if os.path.exists(prompt_file):
+            print(f"Leser prompt fra lokal fil: {prompt_file}")
+            with open(prompt_file, "r") as f:
+                prompt_text = f.read()
+            
+            # Opprett ChatPromptTemplate fra tekst
+            return ChatPromptTemplate.from_template(prompt_text)
+    except Exception as e:
+        print(f"Feil ved lesing av lokal promptfil: {e}")
+    
+    # Hvis lokal fil ikke finnes eller ikke kan leses, prøv LangSmith
+    try:
+        print(f"Prøver å hente prompt '{prompt_name}' fra LangSmith...")
+        # Bruk pull_prompt i stedet for read_prompt (basert på dokumentasjonen)
         prompt = client.pull_prompt(prompt_name)
         
-        # Hvis prompten inneholder en template, returner den
-        if hasattr(prompt, "template"):
-            return prompt.template
+        # Hvis prompten allerede er et ChatPromptTemplate, returner den direkte
+        if isinstance(prompt, ChatPromptTemplate):
+            print(f"Hentet ChatPromptTemplate fra LangSmith: {prompt_name}")
+            return prompt
         
-        # Ellers, returner prompten som en streng
-        return str(prompt)
-    
+        # Hvis prompten er en streng eller har en template-egenskap
+        if isinstance(prompt, str):
+            prompt_text = prompt
+        elif hasattr(prompt, "template"):
+            prompt_text = prompt.template
+        else:
+            prompt_text = str(prompt)
+        
+        print(f"Konverterer prompt til ChatPromptTemplate: {prompt_name}")
+        return ChatPromptTemplate.from_template(prompt_text)
     except Exception as e:
-        raise ValueError(f"Kunne ikke hente prompt '{prompt_name}' fra LangSmith: {str(e)}")
+        print(f"Feil ved henting av prompt '{prompt_name}' fra LangSmith: {e}")
+        
+        # Sjekk alle filer i prompts-mappen
+        prompts_dir = Path("prompts")
+        if prompts_dir.exists():
+            print(f"Tilgjengelige promptfiler: {[f.name for f in prompts_dir.glob('*.txt')]}")
+        
+        raise ValueError(f"Kunne ikke hente prompt '{prompt_name}' fra LangSmith eller lokalt")
 
 def push_prompt_to_hub(prompt_name: str, content: str) -> bool:
     """
@@ -69,7 +97,7 @@ def push_prompt_to_hub(prompt_name: str, content: str) -> bool:
             ("system", content)
         ])
         
-        # Push prompten til LangSmith
+        # Push prompten til LangSmith med push_prompt
         client.push_prompt(prompt_name, object=prompt_template)
         print(f"Oppdatert prompt '{prompt_name}' i LangSmith")
         
@@ -97,15 +125,29 @@ def sync_prompts_to_files() -> None:
         prompts = client.list_prompts()
         
         for prompt in prompts:
-            # Hent promptens innhold
-            prompt_content = get_prompt_from_hub(prompt.name)
-            
-            # Lagre prompten til fil
-            prompt_file = prompts_dir / f"{prompt.name}.txt"
-            with open(prompt_file, "w") as f:
-                f.write(prompt_content)
-            
-            print(f"Synkronisert prompt '{prompt.name}' til {prompt_file}")
+            try:
+                # Hent promptens innhold
+                prompt_content = get_prompt_from_hub(prompt.name)
+                
+                # Lagre prompten til fil
+                prompt_file = prompts_dir / f"{prompt.name}.txt"
+                
+                # Konverter ChatPromptTemplate til tekst
+                if isinstance(prompt_content, ChatPromptTemplate):
+                    if hasattr(prompt_content, "messages") and prompt_content.messages:
+                        # Bruk den første meldingen som innhold
+                        content_to_save = prompt_content.messages[0].content
+                    else:
+                        content_to_save = str(prompt_content)
+                else:
+                    content_to_save = str(prompt_content)
+                
+                with open(prompt_file, "w") as f:
+                    f.write(content_to_save)
+                
+                print(f"Synkronisert prompt '{prompt.name}' til {prompt_file}")
+            except Exception as e:
+                print(f"Feil ved synkronisering av prompt '{prompt.name}': {e}")
     
     except Exception as e:
         raise ValueError(f"Kunne ikke synkronisere prompter: {str(e)}")
@@ -129,17 +171,20 @@ def sync_files_to_prompts() -> None:
         
         # Gå gjennom alle filer i prompts-mappen
         for prompt_file in prompts_dir.glob("*.txt"):
-            # Les promptens innhold
-            with open(prompt_file, "r") as f:
-                prompt_content = f.read()
-            
-            # Hent promptens navn fra filnavnet
-            prompt_name = prompt_file.stem
-            
-            # Push prompten til LangSmith
-            push_prompt_to_hub(prompt_name, prompt_content)
-            
-            print(f"Synkronisert fil {prompt_file} til prompt '{prompt_name}'")
+            try:
+                # Les promptens innhold
+                with open(prompt_file, "r") as f:
+                    prompt_content = f.read()
+                
+                # Hent promptens navn fra filnavnet
+                prompt_name = prompt_file.stem
+                
+                # Push prompten til LangSmith
+                push_prompt_to_hub(prompt_name, prompt_content)
+                
+                print(f"Synkronisert fil {prompt_file} til prompt '{prompt_name}'")
+            except Exception as e:
+                print(f"Feil ved synkronisering av fil {prompt_file}: {e}")
     
     except Exception as e:
         raise ValueError(f"Kunne ikke synkronisere filer: {str(e)}")

@@ -22,14 +22,14 @@ def test_crm_integration():
     print("\n--- Miljøvariabler ---")
     print(f"ENABLE_CRM_INTEGRATION: {os.getenv('ENABLE_CRM_INTEGRATION', 'ikke satt')}")
     print(f"ATTIO_API_KEY: {'Satt' if os.getenv('ATTIO_API_KEY') else 'Ikke satt'}")
-    
+
     # Last inn testdata
     with open("tests/test_data.json", "r") as f:
         test_data = json.load(f)
     
     # Hent domene og målrolle fra testdata
-    domain = test_data.get("domain", "firi.com")
-    target_role = test_data.get("target_role", "ceo eller produktleder")
+    domain = test_data.get("domain", "documaster.com")
+    target_role = test_data.get("target_role", "selger")
     
     # Bruk testbrukere fra test_data.json hvis tilgjengelig, ellers bruk standard testbruker
     test_users = test_data.get("users", [])

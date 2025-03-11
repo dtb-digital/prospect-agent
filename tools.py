@@ -101,38 +101,32 @@ hunter_tool = StructuredTool(
 
 # Attio CRM Tools
 @traceable(name="create_person_in_attio", project=os.getenv("LANGCHAIN_PROJECT", "prospect-agent"))
-def create_person_in_attio(user_data: dict) -> dict:
+def create_person_in_attio(user: dict) -> dict:
     """
     Oppretter en person i Attio basert på brukerdata.
     
     Args:
-        user_data: Dictionary med brukerdata (kan være hele user-objektet)
+        user: Brukerdata med email, first_name, last_name, etc.
         
     Returns:
-        Dictionary med API-respons eller feilmelding
+        Respons fra Attio API
     """
-    print(f"create_person_in_attio kalt med bruker: {user_data.get('email', 'ukjent')}")
+    print(f"create_person_in_attio kalt med bruker: {user.get('email')}")
     
+    # Sjekk om vi har nødvendig informasjon
+    if not user.get("email") or not user.get("first_name"):
+        return {"error": "Mangler nødvendig informasjon (email eller first_name)"}
+    
+    # Opprett person i Attio
     try:
-        # Ekstraher nødvendige felter fra brukerdata
-        email = user_data.get("email")
-        first_name = user_data.get("first_name")
-        last_name = user_data.get("last_name", "")
-        title = user_data.get("role") or user_data.get("career", {}).get("current_role", "")
-        linkedin_url = user_data.get("linkedin_url", "")
-        
-        # Sjekk at vi har nødvendige data
-        if not email or not first_name:
-            return {"error": "Mangler nødvendig informasjon (email eller first_name)"}
-        
         # Opprett data for Attio API
         data = {
             "data": {
                 "values": {
-                    "email_addresses": [email],
-                    "name": f"{first_name} {last_name}".strip(),
-                    "job_title": title,
-                    "linkedin": linkedin_url
+                    "email_addresses": [user.get("email")],
+                    "name": f"{user.get('first_name')} {user.get('last_name', '')}".strip(),
+                    "job_title": user.get("role") or user.get("career", {}).get("current_role", ""),
+                    "linkedin": user.get("linkedin_url", "")
                 }
             }
         }
@@ -204,6 +198,10 @@ def create_note_in_attio(note_params: dict) -> dict:
         # Hvis person_id er et objekt, hent ut record_id
         if isinstance(person_id, dict) and "record_id" in person_id:
             person_id = person_id["record_id"]
+            
+        # Fjern "person_" prefikset hvis det finnes
+        if isinstance(person_id, str) and person_id.startswith("person_"):
+            person_id = person_id[7:]  # Fjern "person_" prefikset
         
         # Opprett data for Attio API
         data = {
@@ -240,4 +238,49 @@ def create_note_in_attio(note_params: dict) -> dict:
     except Exception as e:
         print(f"Feil ved oppretting av notat i Attio: {e}")
         # Returner en feilmelding i stedet for å kaste en exception
+        return {"error": str(e)}
+
+def test_hunter_api(domain: str = "documaster.com") -> Dict:
+    """
+    Tester Hunter API direkte for å sjekke om det fungerer.
+    
+    Args:
+        domain: Domenet som skal søkes etter
+        
+    Returns:
+        Dictionary med API-respons eller feilmelding
+    """
+    print(f"Tester Hunter API for domenet {domain}")
+    
+    try:
+        # Hent API-nøkkel fra miljøvariabel
+        api_key = os.getenv("HUNTER_API_KEY")
+        if not api_key:
+            return {"error": "HUNTER_API_KEY er ikke satt i miljøvariablene"}
+        
+        print(f"Hunter API-nøkkel er satt")
+        
+        # Kall Hunter API direkte
+        response = requests.get(
+            "https://api.hunter.io/v2/domain-search",
+            params={
+                "domain": domain,
+                "api_key": api_key,
+                "offset": 0,
+                "limit": 50
+            }
+        )
+        
+        print(f"Hunter API respons status: {response.status_code}")
+        
+        # Sjekk om responsen er vellykket
+        response.raise_for_status()
+        
+        # Returner responsen som JSON
+        data = response.json()
+        print(f"Hunter API returnerte {len(data.get('data', {}).get('emails', []))} e-poster")
+        
+        return data
+    except Exception as e:
+        print(f"Feil ved testing av Hunter API: {e}")
         return {"error": str(e)}
