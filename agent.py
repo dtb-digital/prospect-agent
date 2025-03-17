@@ -157,11 +157,14 @@ def prioritize_users(state: dict, config: RunnableConfig) -> dict:
         }
     
     try:
+        # Hent max_results fra config
+        max_results = state["config"].get("max_results", 5)
+        
         response = priority_chain.invoke({
             "target_role": state['config']['target_role'],
             "users": json.dumps(all_users, indent=2),
             "available_data": json.dumps({"domain": state['config']['domain']}, indent=2),
-            "max_results": state['config'].get('max_results', 5),
+            "max_results": max_results,
             "schema": get_model_schema(PriorityAnalysis)
         })
         
@@ -169,7 +172,10 @@ def prioritize_users(state: dict, config: RunnableConfig) -> dict:
             # Lag en liste med bare de prioriterte brukerne
             prioritized_users = []
             
-            for priority_user in response.users:
+            # Sorter brukere etter score og begrens til max_results
+            sorted_users = sorted(response.users, key=lambda u: u.score, reverse=True)[:max_results]
+            
+            for priority_user in sorted_users:
                 # Finn den originale brukeren
                 original_user = next((u for u in all_users if u["email"] == priority_user.email), None)
                 
@@ -193,7 +199,7 @@ def prioritize_users(state: dict, config: RunnableConfig) -> dict:
             
             return {
                 "messages": [
-                    AIMessage(content=f"Prioriterte {len(response.users)} brukere")
+                    AIMessage(content=f"Prioriterte {len(prioritized_users)} brukere")
                 ],
                 "users": merged_users,
                 "config": state["config"]
@@ -357,7 +363,7 @@ def analyze_profiles(state: dict, config: RunnableConfig) -> dict:
 def create_crm_contacts(state: dict, config: RunnableConfig) -> dict:
     """Oppretter kontakter i CRM-systemet."""
     # Sjekk om CRM-integrasjon er aktivert
-    if os.getenv("ENABLE_CRM_INTEGRATION") != "true":
+    if not os.getenv("ENABLE_CRM_INTEGRATION", "false").lower() == "true":
         print("CRM-integrasjon er deaktivert. Hopper over kontaktopprettelse.")
         return state
     
@@ -367,11 +373,14 @@ def create_crm_contacts(state: dict, config: RunnableConfig) -> dict:
         # Liste for oppdaterte brukere
         updated_users = []
         
-        # Filtrer brukere som har blitt analysert
-        analyzed_users = [u for u in state.get("users", []) if "analyzed" in u.get("sources", [])]
+        # Filtrer brukere som har blitt analysert og har nødvendig informasjon
+        analyzed_users = [u for u in state.get("users", []) 
+                         if "analyzed" in u.get("sources", []) 
+                         and u.get("email") 
+                         and u.get("first_name")]
         
         if not analyzed_users:
-            print("Ingen analyserte brukere å opprette kontakter for.")
+            print("Ingen analyserte brukere med nødvendig informasjon å opprette kontakter for.")
             return state
         
         for user in analyzed_users:
