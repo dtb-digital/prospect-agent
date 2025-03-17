@@ -5,6 +5,7 @@ from langchain_core.messages import BaseMessage
 from datetime import datetime
 from langgraph.graph import StateGraph
 from operator import add
+import copy
 
 #######################
 # API og Input/Output modeller
@@ -36,81 +37,44 @@ class HunterResponse(BaseModel):
 # Interne modeller (for analyse)
 #######################
 
-def merge_users(current: List[Dict], update: List[Dict]) -> List[Dict]:
-    """Merger brukere basert på email eller linkedin_url som nøkkel."""
-    # Lag map med både email og linkedin_url som nøkler
-    user_map = {}
-    user_refs = {}  # Hold styr på alle referanser til samme bruker
+def merge_users(existing_users: List[Dict], new_users: List[Dict]) -> List[Dict]:
+    """Slår sammen brukere basert på e-post og LinkedIn URL."""
+    result = copy.deepcopy(existing_users)
     
-    for user in current:
-        refs = []
-        if user.get("email"):
-            user_map[user["email"]] = user
-            refs.append(user["email"])
-        if user.get("linkedin_url"):
-            linkedin_url = user["linkedin_url"].rstrip('/')
-            user_map[linkedin_url] = user
-            refs.append(linkedin_url)
-        # Lagre alle referanser til denne brukeren
-        for ref in refs:
-            user_refs[ref] = refs
-    
-    for user in update:
-        # Finn alle mulige nøkler for denne brukeren
-        refs = []
-        if user.get("email"):
-            refs.append(user["email"])
-        if user.get("linkedin_url"):
-            refs.append(user["linkedin_url"].rstrip('/'))
+    for new_user in new_users:
+        # Finn eksisterende bruker basert på e-post eller LinkedIn URL
+        existing_user = next(
+            (u for u in result 
+             if (new_user.get("email") and u.get("email") == new_user.get("email")) or
+                (new_user.get("linkedin_url") and u.get("linkedin_url") == new_user.get("linkedin_url"))),
+            None
+        )
         
-        if not refs:
-            continue
-        
-        # Sjekk om brukeren allerede finnes
-        existing_key = next((ref for ref in refs if ref in user_map), None)
-        
-        if existing_key:
-            # Hent alle referanser til eksisterende bruker
-            all_refs = user_refs.get(existing_key, [])
+        if existing_user:
+            # Oppdater eksisterende bruker
+            idx = result.index(existing_user)
             
-            # Merge med eksisterende bruker
-            merged_user = {
-                **user_map[existing_key],  # Eksisterende data
-                **{k: v for k, v in user.items() if v is not None and (
-                    k not in user_map[existing_key] or  # Ny felt
-                    user_map[existing_key][k] is None or  # Eksisterende felt er None
-                    (k == "sources" and isinstance(v, list))  # Special case for sources
-                )}
-            }
+            # Slå sammen kilder
+            sources = list(set(existing_user.get("sources", []) + new_user.get("sources", [])))
             
-            # Special handling for sources
-            if "sources" in user and "sources" in user_map[existing_key]:
-                merged_user["sources"] = list(set(
-                    user_map[existing_key]["sources"] + user["sources"]
-                ))
+            # Spesialhåndtering for crm-objektet
+            crm = None
+            if "crm" in existing_user or "crm" in new_user:
+                crm = {**(existing_user.get("crm", {})), **(new_user.get("crm", {}))}
             
-            # Oppdater alle referanser til denne brukeren
-            for ref in all_refs:
-                user_map[ref] = merged_user
+            # Slå sammen alle andre felter, prioriter nye data
+            merged_user = {**existing_user, **new_user, "sources": sources}
+            
+            # Legg til crm-objektet hvis det finnes
+            if crm:
+                merged_user["crm"] = crm
+                
+            result[idx] = merged_user
         else:
-            # Ny bruker
-            for ref in refs:
-                user_map[ref] = user
-                user_refs[ref] = refs
+            # Legg til ny bruker
+            result.append(new_user)
     
-    # Fjern duplikater
-    seen = set()
-    unique_users = []
-    for user in user_map.values():
-        identifier = tuple(sorted([
-            user.get("email", ""),
-            (user.get("linkedin_url") or "").rstrip('/')
-        ]))
-        if identifier not in seen:
-            seen.add(identifier)
-            unique_users.append(user)
-    
-    return unique_users
+    return result
 
 class State(TypedDict):
     """State for workflowen."""

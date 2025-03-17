@@ -429,10 +429,14 @@ def create_crm_notes(state: dict, config: RunnableConfig) -> dict:
         updated_users = []
         
         for user in state.get("users", []):
+            # Lag en kopi av brukeren for oppdatering
+            updated_user = copy.deepcopy(user)
+            
             if user.get("crm", {}).get("contact_created") and not user.get("crm", {}).get("note_created"):
                 person_id = user.get("attio_person_id") or user.get("crm", {}).get("contact_id")
                 if not person_id:
                     print(f"Ingen person-ID funnet for {user.get('email')}")
+                    updated_users.append(updated_user)
                     continue
                 
                 # Lag notat-innhold basert på brukerdata
@@ -493,9 +497,6 @@ def create_crm_notes(state: dict, config: RunnableConfig) -> dict:
                     
                     print(f"Attio API-respons: {json.dumps(response, indent=2)}")
                     
-                    # Lag en kopi av brukeren for oppdatering
-                    updated_user = copy.deepcopy(user)
-                    
                     # Sjekk om opprettelsen var vellykket
                     if "error" not in response and "data" in response:
                         # Oppdater brukeren med CRM-informasjon
@@ -505,6 +506,13 @@ def create_crm_notes(state: dict, config: RunnableConfig) -> dict:
                         updated_user["crm"]["note_created"] = True
                         updated_user["crm"]["note_created_at"] = response.get("data", {}).get("created_at")
                         updated_user["crm"]["note_id"] = response.get("data", {}).get("id")
+                        
+                        # Legg til en kilde for å sikre at merge_users prioriterer denne brukeren
+                        if "sources" in updated_user:
+                            updated_user["sources"] = updated_user["sources"] + ["note_created"]
+                        else:
+                            updated_user["sources"] = ["note_created"]
+                            
                         print(f"Notat opprettet for {user.get('email')} med ID {response.get('data', {}).get('id')}")
                     else:
                         # Legg til feilmelding i brukeren
@@ -514,17 +522,24 @@ def create_crm_notes(state: dict, config: RunnableConfig) -> dict:
                         updated_user["crm"]["note_created"] = False
                         updated_user["crm"]["note_error"] = response.get("error", "Ukjent feil")
                         print(f"Feil ved opprettelse av notat for {user.get('email')}: {response.get('error', 'Ukjent feil')}")
-                    
-                    # Legg til den oppdaterte brukeren
-                    updated_users.append(updated_user)
                 except Exception as e:
+                    # Legg til feilmelding i brukeren
+                    if "crm" not in updated_user:
+                        updated_user["crm"] = {}
+                    
+                    updated_user["crm"]["note_created"] = False
+                    updated_user["crm"]["note_error"] = str(e)
                     print(f"Feil ved opprettelse av notat: {str(e)}")
-            else:
-                # Brukeren trenger ikke notat, så vi legger den til uendret
-                updated_users.append(user)
+            
+            # Legg til den oppdaterte brukeren
+            updated_users.append(updated_user)
         
         # Bruk merge_users for å oppdatere state
         merged_users = merge_users(state.get("users", []), updated_users)
+        
+        # Skriv ut status for debugging
+        for user in merged_users:
+            print(f"- {user.get('email')}: Kontakt opprettet: {user.get('crm', {}).get('contact_created')}, Notat opprettet: {user.get('crm', {}).get('note_created')}")
         
         # Returner oppdatert state
         return {
