@@ -37,23 +37,35 @@ class HunterResponse(BaseModel):
 # Interne modeller (for analyse)
 #######################
 
+def normalize_linkedin_url(url: str) -> str:
+    """Normaliserer en LinkedIn URL ved å fjerne avsluttende skråstrek og gjøre den til lowercase."""
+    if not url:
+        return ""
+    url = url.lower()
+    if url.endswith("/"):
+        url = url[:-1]
+    return url
+
 def merge_users(existing_users: List[Dict], new_users: List[Dict]) -> List[Dict]:
     """Slår sammen brukere basert på e-post og LinkedIn URL."""
     result = copy.deepcopy(existing_users)
     
     for new_user in new_users:
+        # Normaliser LinkedIn URL-er
+        new_linkedin_url = normalize_linkedin_url(new_user.get("linkedin_url", ""))
+        
         # Finn eksisterende bruker basert på e-post eller LinkedIn URL
         existing_user = next(
             (u for u in result 
              if (new_user.get("email") and u.get("email") and u.get("email") == new_user.get("email")) or
-                (new_user.get("linkedin_url") and u.get("linkedin_url") and u.get("linkedin_url") == new_user.get("linkedin_url"))),
+                (new_linkedin_url and normalize_linkedin_url(u.get("linkedin_url", "")) == new_linkedin_url)),
             None
         )
         
         # Hvis vi ikke fant en match basert på e-post eller LinkedIn URL, prøv å finne en match basert på bare LinkedIn URL
-        if not existing_user and new_user.get("linkedin_url"):
+        if not existing_user and new_linkedin_url:
             existing_user = next(
-                (u for u in result if u.get("linkedin_url") == new_user.get("linkedin_url")),
+                (u for u in result if normalize_linkedin_url(u.get("linkedin_url", "")) == new_linkedin_url),
                 None
             )
         
@@ -76,13 +88,24 @@ def merge_users(existing_users: List[Dict], new_users: List[Dict]) -> List[Dict]
             if "crm" in existing_user or "crm" in new_user:
                 crm = {**(existing_user.get("crm", {})), **(new_user.get("crm", {}))}
             
-            # Slå sammen alle andre felter, prioriter nye data
-            merged_user = {**existing_user, **new_user, "sources": sources}
+            # Slå sammen alle andre felter, men behold eksisterende verdier hvis nye verdier er tomme
+            merged_user = {}
+            for key in set(list(existing_user.keys()) + list(new_user.keys())):
+                if key == "sources":
+                    merged_user[key] = sources
+                elif key == "crm":
+                    if crm:
+                        merged_user[key] = crm
+                else:
+                    existing_value = existing_user.get(key)
+                    new_value = new_user.get(key)
+                    
+                    # Behold eksisterende verdi hvis ny verdi er tom eller None
+                    if new_value == "" or new_value is None:
+                        merged_user[key] = existing_value
+                    else:
+                        merged_user[key] = new_value
             
-            # Legg til crm-objektet hvis det finnes
-            if crm:
-                merged_user["crm"] = crm
-                
             result[idx] = merged_user
         else:
             # Legg til ny bruker
