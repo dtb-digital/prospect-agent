@@ -45,10 +45,24 @@ def merge_users(existing_users: List[Dict], new_users: List[Dict]) -> List[Dict]
         # Finn eksisterende bruker basert på e-post eller LinkedIn URL
         existing_user = next(
             (u for u in result 
-             if (new_user.get("email") and u.get("email") == new_user.get("email")) or
-                (new_user.get("linkedin_url") and u.get("linkedin_url") == new_user.get("linkedin_url"))),
+             if (new_user.get("email") and u.get("email") and u.get("email") == new_user.get("email")) or
+                (new_user.get("linkedin_url") and u.get("linkedin_url") and u.get("linkedin_url") == new_user.get("linkedin_url"))),
             None
         )
+        
+        # Hvis vi ikke fant en match basert på e-post eller LinkedIn URL, prøv å finne en match basert på bare LinkedIn URL
+        if not existing_user and new_user.get("linkedin_url"):
+            existing_user = next(
+                (u for u in result if u.get("linkedin_url") == new_user.get("linkedin_url")),
+                None
+            )
+        
+        # Hvis vi fortsatt ikke fant en match, prøv å finne en match basert på bare e-post
+        if not existing_user and new_user.get("email"):
+            existing_user = next(
+                (u for u in result if u.get("email") == new_user.get("email")),
+                None
+            )
         
         if existing_user:
             # Oppdater eksisterende bruker

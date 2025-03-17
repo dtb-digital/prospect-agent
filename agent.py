@@ -157,8 +157,8 @@ def prioritize_users(state: dict, config: RunnableConfig) -> dict:
         }
     
     try:
-        # Hent max_results fra config
-        max_results = state["config"].get("max_results", 5)
+        # Hent max_results fra config (bruk max_users hvis det finnes)
+        max_results = state["config"].get("max_users", state["config"].get("max_results", 5))
         
         response = priority_chain.invoke({
             "target_role": state['config']['target_role'],
