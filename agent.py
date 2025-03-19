@@ -595,8 +595,15 @@ def create_workflow() -> StateGraph:
     return workflow.compile()
 
 def get_config() -> RunnableConfig:
+    """Henter konfigurasjon for agenten."""
+    from evaluate import get_evaluation_config
+    
+    # Hent evalueringskonfigurasjon
+    eval_config = get_evaluation_config()
+    
+    # Kombiner med andre konfigurasjoner
     return RunnableConfig(
-        callbacks=[],
+        callbacks=eval_config.get("callbacks", []),
         tags=["prospect-agent"],
         metadata={"version": "1.0"}
     )
