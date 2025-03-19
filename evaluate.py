@@ -8,14 +8,34 @@ from langchain_core.runnables import RunnableConfig
 from langsmith.schemas import Example, Run
 
 load_dotenv()
-client = Client()
+
+# Initialiser LangSmith-klienten
+try:
+    # Sjekk at miljøvariabelen er satt
+    api_key = os.getenv("LANGCHAIN_API_KEY")
+    if not api_key:
+        print("ADVARSEL: LANGCHAIN_API_KEY er ikke satt i .env-filen.")
+    
+    # Bruk LANGSMITH_ENDPOINT hvis det er satt, ellers bruk standard EU-endepunkt
+    endpoint = os.getenv("LANGSMITH_ENDPOINT", "https://eu.api.smith.langchain.com")
+    print(f"Bruker LangSmith-endepunkt: {endpoint}")
+    
+    # Initialiser klienten
+    client = Client(
+        api_key=api_key,
+        api_url=endpoint
+    )
+    print("LangSmith-klient initialisert.")
+except Exception as e:
+    print(f"Feil ved initialisering av LangSmith-klient: {e}")
+    client = None
 
 # Sjekk om evaluering er aktivert
 ENABLE_EVALUATION = os.getenv("ENABLE_EVALUATION", "false").lower() == "true"
 print(f"Evaluering er {'aktivert' if ENABLE_EVALUATION else 'deaktivert'}")
 
 # Navn på ground-truth datasettet
-GROUND_TRUTH_DATASET = os.getenv("GROUND_TRUTH_DATASET", "prospect-agent-ground-truth")
+GROUND_TRUTH_DATASET = os.getenv("GROUND_TRUTH_DATASET", "ground-truth")
 
 def get_evaluation_config() -> RunnableConfig:
     """Konfigurerer evaluering av agenten."""
@@ -173,6 +193,18 @@ def evaluate_against_ground_truth():
     try:
         print(f"Evaluerer agenten mot ground-truth datasett: {GROUND_TRUTH_DATASET}")
         
+        # Sjekk at API-nøkkelen er gyldig
+        if not check_langsmith_api():
+            print("Kan ikke evaluere: LangSmith API-nøkkelen er ikke gyldig.")
+            return None
+        
+        # Sjekk at datasettet eksisterer og har eksempler
+        dataset = check_ground_truth_dataset()
+        if not dataset:
+            print("Kan ikke evaluere: Ground-truth datasett ikke funnet eller har ingen eksempler.")
+            print("Du må opprette datasettet og legge til eksempler manuelt i LangSmith.")
+            return None
+        
         # Importer analyze_domain her for å unngå sirkularitet
         from agent import analyze_domain
         
@@ -181,7 +213,10 @@ def evaluate_against_ground_truth():
             """Wrapper-funksjon for analyze_domain."""
             domain = inputs.get("domain")
             target_role = inputs.get("target_role")
-            return analyze_domain(domain, target_role)
+            print(f"Kjører analyze_domain med domain={domain}, target_role={target_role}")
+            result = analyze_domain(domain, target_role)
+            print(f"Resultat: {len(result.get('users', []))} brukere funnet")
+            return result
         
         # Lag et unikt eksperimentnavn med tidsstempel
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -189,22 +224,32 @@ def evaluate_against_ground_truth():
         
         # Kjør evalueringen
         print(f"Evaluerer agenten mot ground-truth datasett...")
+        print(f"Eksperiment: {experiment_prefix}")
+        
+        # Skriv ut alle evaluatorer som brukes
+        evaluators = [
+            relevans_evaluator,
+            kvalitet_evaluator,
+            fullstendighet_evaluator,
+            prioritering_evaluator
+        ]
+        print(f"Bruker {len(evaluators)} evaluatorer:")
+        for evaluator in evaluators:
+            print(f"  - {evaluator.__name__}")
+        
+        # Kjør evalueringen
         results = client.evaluate(
             predict,
             data=GROUND_TRUTH_DATASET,
-            evaluators=[
-                relevans_evaluator,
-                kvalitet_evaluator,
-                fullstendighet_evaluator,
-                prioritering_evaluator
-            ],
+            evaluators=evaluators,
             experiment_prefix=experiment_prefix,
             metadata={"timestamp": timestamp},
             tags=["prospect-agent", "evaluation"]
         )
         
         print(f"Evaluering fullført!")
-        print(f"Se resultatene i LangSmith: https://smith.langchain.com/projects")
+        print(f"Eksperiment: {experiment_prefix}")
+        print(f"Se resultatene i LangSmith: https://eu.smith.langchain.com/projects")
         
         return results
     
@@ -212,6 +257,87 @@ def evaluate_against_ground_truth():
         print(f"Kunne ikke evaluere mot ground-truth datasett: {e}")
         traceback.print_exc()
         return None
+
+def check_langsmith_api():
+    """Sjekker at LangSmith API-nøkkelen er riktig og at du har tilgang."""
+    try:
+        # Sjekk at miljøvariabelen er satt
+        api_key = os.getenv("LANGCHAIN_API_KEY")
+        if not api_key:
+            print("ADVARSEL: LANGCHAIN_API_KEY er ikke satt i .env-filen.")
+            return False
+        
+        # Skriv ut de første og siste tegnene i API-nøkkelen for debugging
+        masked_key = f"{api_key[:4]}...{api_key[-4:]}" if len(api_key) > 8 else "***"
+        print(f"Bruker LANGCHAIN_API_KEY: {masked_key}")
+        
+        # Sjekk at andre nødvendige miljøvariabler er satt
+        project = os.getenv("LANGCHAIN_PROJECT")
+        if not project:
+            print("ADVARSEL: LANGCHAIN_PROJECT er ikke satt i .env-filen.")
+        else:
+            print(f"Bruker LANGCHAIN_PROJECT: {project}")
+        
+        # Sjekk at endepunktet er riktig
+        endpoint = os.getenv("LANGSMITH_ENDPOINT", "https://eu.api.smith.langchain.com")
+        print(f"Bruker LANGSMITH_ENDPOINT: {endpoint}")
+        
+        # Prøv å hente datasets
+        # Konverter generator til liste for å kunne bruke len()
+        datasets = list(client.list_datasets())
+        print(f"LangSmith API fungerer! Fant {len(datasets)} datasets.")
+        
+        # Skriv ut navnene på datasettene
+        if datasets:
+            print("Tilgjengelige datasett:")
+            for dataset in datasets:
+                print(f"  - {dataset.name} (ID: {dataset.id})")
+        
+        return True
+    except Exception as e:
+        print(f"Feil ved tilkobling til LangSmith API: {e}")
+        traceback.print_exc()
+        return False
+
+def check_ground_truth_dataset():
+    """Sjekker at ground-truth datasettet eksisterer og har eksempler."""
+    try:
+        print(f"Sjekker ground-truth datasett: {GROUND_TRUTH_DATASET}")
+        
+        # Sjekk om datasettet eksisterer
+        try:
+            dataset = client.read_dataset(dataset_name=GROUND_TRUTH_DATASET)
+            print(f"Fant ground-truth datasett: {dataset.name} (ID: {dataset.id})")
+        except Exception as e:
+            print(f"Ground-truth datasett '{GROUND_TRUTH_DATASET}' ikke funnet: {e}")
+            print("Du må opprette datasettet manuelt i LangSmith før du kan kjøre evalueringen.")
+            return None
+        
+        # Sjekk om datasettet har eksempler
+        # Konverter generator til liste for å kunne bruke len()
+        examples = list(client.list_examples(dataset_name=GROUND_TRUTH_DATASET))
+        print(f"Datasettet har {len(examples)} eksempler")
+        
+        if len(examples) == 0:
+            print("ADVARSEL: Datasettet har ingen eksempler!")
+            print("Du må legge til minst ett eksempel i datasettet før du kan kjøre evalueringen.")
+            return None
+        
+        return dataset
+    
+    except Exception as e:
+        print(f"Feil ved sjekk av ground-truth datasett: {e}")
+        traceback.print_exc()
+        return None
+
+# Kjør sjekken når modulen lastes
+print("Sjekker LangSmith API...")
+if not check_langsmith_api():
+    print("ADVARSEL: LangSmith API-nøkkelen er ikke gyldig eller du har ikke tilgang.")
+    print("Sett LANGCHAIN_API_KEY i .env-filen.")
+
+print("Sjekker ground-truth datasett...")
+check_ground_truth_dataset()
 
 if __name__ == "__main__":
     # Kjør evaluering mot ground-truth datasettet
