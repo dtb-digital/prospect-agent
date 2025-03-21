@@ -146,7 +146,7 @@ def prioritering_evaluator(run: Run, example: Example) -> Dict[str, Any]:
         "comment": "Kontaktene er sortert etter relevans" if is_sorted else "Kontaktene er ikke sortert etter relevans"
     }
 
-def evaluate_results(results: Dict[str, Any]) -> Dict[str, Any]:
+def evaluate_result(domain: str, target_role: str, results: Dict[str, Any]) -> Dict[str, Any]:
     """Evaluerer resultatene fra agenten."""
     
     # Sjekk om evaluering er aktivert
@@ -159,7 +159,10 @@ def evaluate_results(results: Dict[str, Any]) -> Dict[str, Any]:
         # Opprett en Run-lignende struktur for å bruke evaluatorene
         mock_run = type('Run', (), {
             'outputs': results,
-            'inputs': results.get('config', {})
+            'inputs': {
+                'domain': domain,
+                'target_role': target_role
+            }
         })
         
         # Evaluer resultatene med hver evaluator
@@ -211,8 +214,25 @@ def evaluate_against_ground_truth():
         # Definer en wrapper-funksjon for analyze_domain
         def predict(inputs: Dict[str, Any]) -> Dict[str, Any]:
             """Wrapper-funksjon for analyze_domain."""
-            domain = inputs.get("domain")
-            target_role = inputs.get("target_role")
+            # Sjekk om input har config-objekt
+            if "config" in inputs and isinstance(inputs["config"], dict):
+                config = inputs["config"]
+                domain = config.get("domain")
+                target_role = config.get("target_role")
+            else:
+                # Prøv å hente direkte fra inputs
+                domain = inputs.get("domain")
+                target_role = inputs.get("target_role")
+            
+            # Valider inputs
+            if not domain or not isinstance(domain, str):
+                print(f"Ugyldig domain: {domain}")
+                return {"error": "Domain må være en gyldig streng"}
+            
+            if not target_role or not isinstance(target_role, str):
+                print(f"Ugyldig target_role: {target_role}")
+                return {"error": "Target role må være en gyldig streng"}
+            
             print(f"Kjører analyze_domain med domain={domain}, target_role={target_role}")
             result = analyze_domain(domain, target_role)
             print(f"Resultat: {len(result.get('users', []))} brukere funnet")
@@ -243,8 +263,7 @@ def evaluate_against_ground_truth():
             data=GROUND_TRUTH_DATASET,
             evaluators=evaluators,
             experiment_prefix=experiment_prefix,
-            metadata={"timestamp": timestamp},
-            tags=["prospect-agent", "evaluation"]
+            metadata={"timestamp": timestamp, "tags": ["prospect-agent", "evaluation"]}
         )
         
         print(f"Evaluering fullført!")
